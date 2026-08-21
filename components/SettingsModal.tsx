@@ -26,6 +26,20 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   );
 }
 
+function StatusChip({ label, ok }: { label: string; ok: boolean | null }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted">
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${
+          ok == null ? "bg-border-strong" : ok ? "bg-success" : "bg-danger"
+        }`}
+      />
+      {label}
+      {ok === false && <span className="text-danger">not configured</span>}
+    </span>
+  );
+}
+
 export function SettingsModal({
   settings,
   acrConfigured,
@@ -64,23 +78,18 @@ export function SettingsModal({
         </div>
 
         <div className="space-y-5">
-          <Section title="Recognition">
-            <Row label="Shazam" hint="Primary recognition provider">
-              <Toggle checked={draft.scan.useShazam} onChange={(v) => scan({ useShazam: v })} />
-            </Row>
-            <Row
-              label="ACRCloud Fallback"
-              hint={
-                acrConfigured === false
-                  ? "Not configured — set ACR_* keys in .env.local"
-                  : "Used only when Shazam finds nothing"
-              }
-            >
-              <Toggle checked={draft.scan.useAcrCloud} onChange={(v) => scan({ useAcrCloud: v })} />
-            </Row>
-          </Section>
+          {/* Read-only service status */}
+          <div className="flex flex-wrap gap-2">
+            <StatusChip label="Shazam" ok />
+            <StatusChip label="ACRCloud" ok={acrConfigured} />
+            <StatusChip label="DJ Pool" ok={djPoolConfigured} />
+          </div>
 
-          <Section title="Scanning">
+          <Section title='Custom Scan Mode'>
+            <p className="text-xs leading-relaxed text-muted">
+              Only used when scanning with the <span className="font-medium text-text/80">Custom</span> preset
+              — Fast and Thorough set these automatically.
+            </p>
             <Row label="Scan Interval" hint="Gap between sample positions">
               <NumberField
                 value={draft.scan.scanInterval}
@@ -91,39 +100,8 @@ export function SettingsModal({
                 suffix="sec"
               />
             </Row>
-            <Row label="Sample Duration" hint="Audio length sent to recognition">
-              <NumberField
-                value={draft.scan.sampleDuration}
-                onChange={(v) => scan({ sampleDuration: v })}
-                min={5}
-                max={20}
-                suffix="sec"
-              />
-            </Row>
             <Row label="Smart Scan" hint="Fewer samples while the same song plays">
               <Toggle checked={draft.scan.smartScan} onChange={(v) => scan({ smartScan: v })} />
-            </Row>
-          </Section>
-
-          <Section title="Duplicate Detection">
-            <Row label="Merge Same Song Within" hint="Consecutive detections become one row">
-              <NumberField
-                value={draft.scan.mergeWindow}
-                onChange={(v) => scan({ mergeWindow: v })}
-                min={0}
-                max={3600}
-                step={10}
-                suffix="sec"
-              />
-            </Row>
-          </Section>
-
-          <Section title="Files">
-            <Row label="Keep Temporary Files" hint="Skip auto-cleanup of /temp/jobs">
-              <Toggle
-                checked={draft.scan.keepTempFiles}
-                onChange={(v) => scan({ keepTempFiles: v })}
-              />
             </Row>
           </Section>
 
@@ -162,20 +140,20 @@ export function SettingsModal({
         </div>
 
         <div className="mt-6 flex gap-3">
-          <button
+          {/* <button
             type="button"
             onClick={onClose}
             className="flex-1 rounded-xl border border-border bg-surface-2 px-4 py-2.5 text-sm font-medium text-muted hover:text-text"
           >
             Cancel
-          </button>
+          </button> */}
           <button
             type="button"
             onClick={() => {
               onSave(draft);
               onClose();
             }}
-            className="flex-1 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90"
+            className="flex-1 rounded-xl bg-accent-gradient px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90"
           >
             Save Settings
           </button>

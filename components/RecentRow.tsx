@@ -1,9 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { FileAudio, ListMusic, Trash2, X } from "lucide-react";
+import { FileAudio, FolderOpen, Globe, ListMusic, Trash2, X } from "lucide-react";
 import { clearRecent, removeRecent, useRecent, type RecentItem } from "@/lib/client/recent";
 import { youtubeThumb } from "@/lib/client/youtube";
+
+const KIND_BADGE = {
+  url: { label: "URL", icon: <Globe size={9} /> },
+  file: { label: "Audio", icon: <FileAudio size={9} /> },
+  folder: { label: "Folder", icon: <FolderOpen size={9} /> },
+} as const;
 
 function relativeTime(at: number): string {
   const diff = Date.now() - at;
@@ -42,6 +48,7 @@ export function RecentRow({
       <div className="flex gap-4 overflow-x-auto pb-2">
         {items.map((item) => {
           const thumb = youtubeThumb(item.url);
+          const badge = KIND_BADGE[item.kind ?? "url"];
           return (
             <div key={item.url} className="group relative w-40 shrink-0">
               <button
@@ -62,9 +69,13 @@ export function RecentRow({
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-muted">
-                      {item.kind === "file" ? <FileAudio size={20} /> : <ListMusic size={20} />}
+                      <ListMusic size={20} />
                     </div>
                   )}
+                  <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/85 backdrop-blur-sm">
+                    {badge.icon}
+                    {badge.label}
+                  </span>
                 </div>
                 <div className="mt-2 line-clamp-2 text-xs font-medium leading-snug text-text/90">
                   {item.title ?? item.url}

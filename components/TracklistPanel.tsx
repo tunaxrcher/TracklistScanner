@@ -18,8 +18,8 @@ import {
 } from "lucide-react";
 import { useJob } from "@/lib/client/useJob";
 import type { AppSettings } from "@/lib/client/settings";
-import type { DjPoolCandidate, ScanMode, TrackEntry } from "@/lib/types";
-import { cleanTracklist, formatTimestamp } from "@/lib/tracklist";
+import type { DjPoolCandidate, ScanMode, ScanSettings, TrackEntry } from "@/lib/types";
+import { cleanTracklist, formatTimestamp, mergeTracklists } from "@/lib/tracklist";
 import {
   filenameFromResponse,
   readBlobWithProgress,
@@ -49,6 +49,14 @@ const SOURCES: { id: ScanMode; name: string; description: string; icon: React.Re
   { id: "folder", name: "Folder", description: "Scan many audio files", icon: <FolderOpen size={20} /> },
 ];
 
+type ScanPreset = "fast" | "thorough" | "custom";
+
+const PRESETS: { id: ScanPreset; name: string; description: string }[] = [
+  { id: "thorough", name: "Thorough", description: "DJ mixes, fast song changes · Smart OFF · 20s" },
+  { id: "fast", name: "Fast", description: "Albums, podcasts, long plays · Smart ON · 30s" },
+  { id: "custom", name: "Custom", description: "Use values from Settings" },
+];
+
 interface DirectoryPickerWindow extends Window {
   showDirectoryPicker?: (options?: { mode?: string }) => Promise<FileSystemDirectoryHandle>;
 }
@@ -75,6 +83,7 @@ export function TracklistPanel({
   djPoolConfigured: boolean | null;
 }) {
   const [mode, setMode] = useState<ScanMode>("url");
+  const [preset, setPreset] = useState<ScanPreset>("thorough");
   const [url, setUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [cleaned, setCleaned] = useState(false);
@@ -102,6 +111,9 @@ export function TracklistPanel({
   const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(null);
   // Tracklist restored from a Recent item (no live job behind it).
   const [restored, setRestored] = useState<{ url: string; title?: string; tracks: TrackEntry[] } | null>(null);
+  // Accumulated tracks from previous rounds when using "Rescan & Merge".
+  const [baseTracks, setBaseTracks] = useState<TrackEntry[] | null>(null);
+  const [mergeRounds, setMergeRounds] = useState(0);
 
   const scan = job?.scan;
   const running = job != null && !["completed", "failed", "cancelled"].includes(job.status);
@@ -110,10 +122,11 @@ export function TracklistPanel({
   const done = job != null && !running;
   // DJ Pool tools are active for a finished scan or a restored Recent result.
   const resultsReady = done || (!job && restored != null);
-  const sourceTracks = useMemo(
-    () => scan?.tracks ?? restored?.tracks ?? [],
-    [scan?.tracks, restored?.tracks],
-  );
+  const sourceTracks = useMemo(() => {
+    const current = scan?.tracks ?? restored?.tracks ?? [];
+    if (!baseTracks) return current;
+    return mergeTracklists(baseTracks, scan?.tracks ?? [], settings.scan.mergeWindow);
+  }, [scan?.tracks, restored?.tracks, baseTracks, settings.scan.mergeWindow]);
   const hasTracks = sourceTracks.length > 0;
 
   const displayTracks: TrackEntry[] = useMemo(
@@ -300,7 +313,7 @@ export function TracklistPanel({
   const probeKey = done && job ? job.id : !job && restored ? `recent:${restored.url}` : null;
   useEffect(() => {
     if (!probeKey || djPoolConfigured === false) return;
-    const tracks = job ? job.scan?.tracks ?? [] : restored?.tracks ?? [];
+    const tracks = sourceTracks;
     if (tracks.length === 0) return;
     if (probedJobId.current === probeKey) return;
     probedJobId.current = probeKey;
@@ -318,7 +331,11 @@ export function TracklistPanel({
 
     setDjRows((prev) => {
       const next = { ...prev };
-      for (const t of tracks) next[t.id] = { status: "checking" };
+      for (const t of tracks) {
+        const cur = next[t.id]?.status;
+        if (cur === "downloading" || cur === "done") continue; // keep user results
+        next[t.id] = { status: "checking" };
+      }
       return next;
     });
 
@@ -371,7 +388,7 @@ export function TracklistPanel({
     return () => {
       cancelled = true;
     };
-  }, [probeKey, job, restored, djPoolConfigured, settings.djpool]);
+  }, [probeKey, sourceTracks, djPoolConfigured, settings.djpool]);
 
   const djColumn: DjPoolColumn = {
     configured: djPoolConfigured,
@@ -394,6 +411,8 @@ export function TracklistPanel({
     closePicker();
     setNowPlaying(null);
     setRestored(null);
+    setBaseTracks(null);
+    setMergeRounds(0);
     djJobTrackIds.current = [];
     probedJobId.current = null;
     setCleaned(false);
@@ -410,7 +429,7 @@ export function TracklistPanel({
   // URL items without saved tracks just prefill the URL for a fresh scan.
   const onSelectRecent = (item: RecentItem) => {
     if (running || starting) return;
-    if (item.kind === "file") {
+    if (item.kind === "file" || item.kind === "folder") {
       if (!item.tracks || item.tracks.length === 0) return;
       resetAll();
       setRestored({ url: item.url, title: item.title, tracks: item.tracks });
@@ -451,16 +470,37 @@ export function TracklistPanel({
   // File/folder scans get a `file:` pseudo-key — they can't be re-scanned from
   // Recent (the file lives on the user's disk) but their result can be reopened.
   useEffect(() => {
-    if (!done || !scan || scan.tracks.length === 0) return;
+    if (!done || !scan || sourceTracks.length === 0) return;
     if (scan.mode === "url") {
-      if (url) addRecent(url, scan.info?.title, scan.tracks);
+      if (url) addRecent(url, scan.info?.title, sourceTracks);
     } else {
       const first = files[0]?.name;
       if (!first) return;
       const name = files.length > 1 ? `${first} +${files.length - 1} more` : first;
-      addRecent(`file:${name}`, name, scan.tracks, "file");
+      addRecent(`file:${name}`, name, sourceTracks, scan.mode);
     }
-  }, [done, scan, url, files]);
+  }, [done, scan, url, files, sourceTracks]);
+
+  /** Scan settings with the chosen preset applied on top of Settings values. */
+  const effectiveScanSettings = (): ScanSettings => {
+    if (preset === "fast") return { ...settings.scan, smartScan: true, scanInterval: 30 };
+    if (preset === "thorough") return { ...settings.scan, smartScan: false, scanInterval: 20 };
+    return settings.scan;
+  };
+
+  const startScanJob = (scanMode: ScanMode) => {
+    void start(() => {
+      const form = new FormData();
+      form.set("mode", scanMode);
+      form.set("settings", JSON.stringify(effectiveScanSettings()));
+      if (scanMode === "url") {
+        form.set("url", url);
+      } else {
+        for (const file of files) form.append("files", file, file.name);
+      }
+      return fetch("/api/jobs/scan", { method: "POST", body: form });
+    });
+  };
 
   const beginScan = () => {
     // The form can be visible alongside a restored result — make sure no DJ
@@ -468,17 +508,34 @@ export function TracklistPanel({
     // new scan.
     clearResults();
     if (mode === "url") addRecent(url.trim());
-    void start(() => {
-      const form = new FormData();
-      form.set("mode", mode);
-      form.set("settings", JSON.stringify(settings.scan));
-      if (mode === "url") {
-        form.set("url", url);
-      } else {
-        for (const file of files) form.append("files", file, file.name);
-      }
-      return fetch("/api/jobs/scan", { method: "POST", body: form });
-    });
+    startScanJob(mode);
+  };
+
+  // Mode of the currently displayed result (live job or restored Recent item).
+  const resultMode: ScanMode | null = scan
+    ? scan.mode
+    : restored
+      ? restored.url.startsWith("file:")
+        ? "file"
+        : "url"
+      : null;
+  // Rescan needs the original source to still be around (URL text / picked files).
+  const canRescan =
+    resultMode === "url"
+      ? url.trim().length > 0
+      : resultMode === "file" || resultMode === "folder"
+        ? files.length > 0
+        : false;
+
+  /** Scan the same source again and merge new detections into the current list. */
+  const rescanMerge = () => {
+    if (!resultMode || !canRescan) return;
+    setBaseTracks(sourceTracks);
+    setMergeRounds((n) => n + 1);
+    setRestored(null);
+    djJob.reset();
+    djJobTrackIds.current = [];
+    startScanJob(resultMode);
   };
 
   const canStart = mode === "url" ? url.trim().length > 0 : files.length > 0;
@@ -617,6 +674,32 @@ export function TracklistPanel({
               </div>
             )}
 
+            {/* Scan preset */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+                Scan Mode
+              </label>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setPreset(p.id)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                      preset === p.id
+                        ? "border-accent bg-accent-soft/60"
+                        : "border-border bg-surface hover:border-border-strong"
+                    }`}
+                  >
+                    <div className={`text-sm font-semibold ${preset === p.id ? "text-accent" : ""}`}>
+                      {p.name}
+                    </div>
+                    <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{p.description}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={beginScan}
@@ -753,6 +836,14 @@ export function TracklistPanel({
                     cleaned
                   </span>
                 )}
+                {mergeRounds > 0 && (
+                  <span
+                    className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium normal-case"
+                    title={`Merged results from ${mergeRounds + 1} scan rounds`}
+                  >
+                    merged ×{mergeRounds + 1}
+                  </span>
+                )}
               </h2>
               {!job && restored && (
                 <span className="truncate text-xs text-muted" title={restored.title ?? restored.url}>
@@ -813,6 +904,16 @@ export function TracklistPanel({
 
                 <span className="mx-1 h-4 w-px bg-border" />
 
+                {canRescan && (
+                  <button
+                    type="button"
+                    onClick={rescanMerge}
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
+                    title="Scan the same source again and merge newly found songs into this list"
+                  >
+                    <ScanLine size={13} /> Rescan &amp; Merge
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setCleaned((v) => !v)}

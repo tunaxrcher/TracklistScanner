@@ -11,7 +11,7 @@ export interface RecentItem {
   /** Tracklist saved from the last completed scan of this source. */
   tracks?: TrackEntry[];
   /** Local file/folder scans can only restore their saved tracklist. */
-  kind?: "url" | "file";
+  kind?: "url" | "file" | "folder";
 }
 
 const STORAGE_KEY = "audio-tool-recent-v1";
@@ -46,7 +46,7 @@ export function addRecent(
   url: string,
   title?: string,
   tracks?: TrackEntry[],
-  kind: "url" | "file" = "url",
+  kind: "url" | "file" | "folder" = "url",
 ): void {
   const trimmed = url.trim();
   if (!trimmed) return;

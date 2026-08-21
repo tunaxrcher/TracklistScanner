@@ -57,6 +57,32 @@ export function shouldMerge(
   return timestamp - prev.lastSeen <= mergeWindowSec;
 }
 
+/**
+ * Merge tracklists from repeated scans of the same source ("Rescan & Merge").
+ * An incoming track is added unless the base already contains the same song
+ * whose detected span (first seen → last seen, padded by mergeWindowSec)
+ * covers its position. Result keeps file order then time order.
+ */
+export function mergeTracklists(
+  base: TrackEntry[],
+  incoming: TrackEntry[],
+  mergeWindowSec: number,
+): TrackEntry[] {
+  const out = [...base];
+  for (const track of incoming) {
+    const key = trackKey(track.title, track.artist);
+    const dup = out.some(
+      (b) =>
+        b.fileIndex === track.fileIndex &&
+        trackKey(b.title, b.artist) === key &&
+        track.timestamp >= b.timestamp - mergeWindowSec &&
+        track.timestamp <= b.lastSeen + mergeWindowSec,
+    );
+    if (!dup) out.push(track);
+  }
+  return out.sort((a, b) => a.fileIndex - b.fileIndex || a.timestamp - b.timestamp);
+}
+
 export interface CleanOptions {
   /** Remove duplicate songs across the whole list (not only consecutive). */
   removeDuplicates: boolean;
