@@ -129,6 +129,15 @@ export function TracklistPanel({
   }, [scan?.tracks, restored?.tracks, baseTracks, settings.scan.mergeWindow]);
   const hasTracks = sourceTracks.length > 0;
 
+  // Auto-enable Clean once a scan finishes (adjust-state-during-render):
+  // the raw list often carries provider-alias duplicates and one-off blips,
+  // so the cleaned view is the better default. Users can still toggle it off.
+  const [wasDone, setWasDone] = useState(false);
+  if (done !== wasDone) {
+    setWasDone(done);
+    if (done) setCleaned(true);
+  }
+
   const displayTracks: TrackEntry[] = useMemo(
     () => (cleaned ? cleanTracklist(sourceTracks) : sourceTracks),
     [sourceTracks, cleaned],
@@ -433,6 +442,7 @@ export function TracklistPanel({
       if (!item.tracks || item.tracks.length === 0) return;
       resetAll();
       setRestored({ url: item.url, title: item.title, tracks: item.tracks });
+      setCleaned(true);
       return;
     }
     resetAll();
@@ -440,6 +450,7 @@ export function TracklistPanel({
     setUrl(item.url);
     if (item.tracks && item.tracks.length > 0) {
       setRestored({ url: item.url, title: item.title, tracks: item.tracks });
+      setCleaned(true);
     }
   };
 

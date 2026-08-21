@@ -77,7 +77,11 @@ export async function recognizeSample(
     try {
       const result = await recognizeWithAcrCloud(wavPath);
       if (result) return { result, degraded: false };
-      return { result: null, degraded: false };
+      // ACR saying "no match" is only a full answer when Shazam also had its
+      // say. If Shazam was rate-limited, the song may simply be missing from
+      // ACR's catalog — treat it as degraded so the scanner backs off and the
+      // gap-fill pass revisits this region.
+      return { result: null, degraded: settings.useShazam && !shazamAnswered };
     } catch (err) {
       if (err instanceof AppError && err.code === "ACR_RATE_LIMIT") throw err;
       console.warn("[acrcloud]", err instanceof Error ? err.message : err);

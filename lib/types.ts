@@ -51,7 +51,9 @@ export interface ScanSettings {
 
 export const DEFAULT_SCAN_SETTINGS: ScanSettings = {
   scanInterval: 30,
-  sampleDuration: 10,
+  // 12s is Shazam's sweet spot: verified empirically that marginal songs
+  // (e.g. tempo-shifted tracks in DJ mixes) match at 12s but not at 10s/14s.
+  sampleDuration: 12,
   smartScan: true,
   mergeWindow: 120,
   useShazam: true,

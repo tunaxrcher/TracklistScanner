@@ -120,7 +120,9 @@ async function runScan(jobId: string, request: ScanRequest): Promise<void> {
       onTrack: (track) => {
         jobManager.update(jobId, (job) => {
           if (!job.scan) return;
+          // Gap-fill detections arrive after later songs; keep time order.
           job.scan.tracks.push(track);
+          job.scan.tracks.sort((a, b) => a.fileIndex - b.fileIndex || a.timestamp - b.timestamp);
           job.scan.songsFound = job.scan.tracks.length;
         });
       },
@@ -128,7 +130,11 @@ async function runScan(jobId: string, request: ScanRequest): Promise<void> {
         jobManager.update(jobId, (job) => {
           if (!job.scan) return;
           const existing = job.scan.tracks.find((t) => t.id === track.id);
-          if (existing) existing.lastSeen = track.lastSeen;
+          if (existing) {
+            // Gap-fill can extend a span backwards as well as forwards.
+            existing.timestamp = track.timestamp;
+            existing.lastSeen = track.lastSeen;
+          }
         });
       },
     });

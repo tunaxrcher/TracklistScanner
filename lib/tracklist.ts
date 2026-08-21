@@ -68,17 +68,24 @@ export function mergeTracklists(
   incoming: TrackEntry[],
   mergeWindowSec: number,
 ): TrackEntry[] {
-  const out = [...base];
+  const out = base.map((t) => ({ ...t }));
   for (const track of incoming) {
     const key = trackKey(track.title, track.artist);
-    const dup = out.some(
+    const dup = out.find(
       (b) =>
         b.fileIndex === track.fileIndex &&
         trackKey(b.title, b.artist) === key &&
         track.timestamp >= b.timestamp - mergeWindowSec &&
         track.timestamp <= b.lastSeen + mergeWindowSec,
     );
-    if (!dup) out.push(track);
+    if (dup) {
+      // Same song seen in both rounds: widen the span to the union so the
+      // cleaning pass has accurate timing to work with.
+      dup.timestamp = Math.min(dup.timestamp, track.timestamp);
+      dup.lastSeen = Math.max(dup.lastSeen, track.lastSeen);
+    } else {
+      out.push(track);
+    }
   }
   return out.sort((a, b) => a.fileIndex - b.fileIndex || a.timestamp - b.timestamp);
 }
@@ -89,16 +96,58 @@ export interface CleanOptions {
 }
 
 /**
- * Clean tracklist: normalize display text, drop global duplicates keeping the
- * first occurrence, keep file order then time order.
+ * Recognition providers often name the same song differently (Thai vs English
+ * title, artist aliases like "Knomjean" vs "ขนมจีน"). That shows up as an
+ * A, B, A sandwich in the raw list: the alias B sits inside the time span of
+ * the real song A. Cleaning therefore runs three passes:
+ *
+ *  1. re-merge same-song entries whose detected spans (nearly) touch — this
+ *     re-joins the two halves of A that the alias split apart,
+ *  2. drop single-detection "blips" that sit fully inside another song's
+ *     span (the alias / one-off misrecognition B),
+ *  3. normalize display text and (optionally) drop repeats across the list.
  */
 export function cleanTracklist(tracks: TrackEntry[], opts: CleanOptions = { removeDuplicates: true }): TrackEntry[] {
   const sorted = [...tracks].sort(
     (a, b) => a.fileIndex - b.fileIndex || a.timestamp - b.timestamp,
   );
+
+  // Pass 1: merge split spans of the same song (gap up to 3 minutes).
+  const SPAN_GAP_SEC = 180;
+  const merged: TrackEntry[] = [];
+  for (const track of sorted) {
+    const key = trackKey(track.title, track.artist);
+    const prev = merged.find(
+      (m) =>
+        m.fileIndex === track.fileIndex &&
+        trackKey(m.title, m.artist) === key &&
+        track.timestamp >= m.timestamp &&
+        track.timestamp - m.lastSeen <= SPAN_GAP_SEC,
+    );
+    if (prev) {
+      prev.lastSeen = Math.max(prev.lastSeen, track.lastSeen);
+      continue;
+    }
+    merged.push({ ...track });
+  }
+
+  // Pass 2: drop one-sample blips sandwiched inside another song's span.
+  const survivors = merged.filter((track) => {
+    const isBlip = track.lastSeen - track.timestamp <= 0;
+    if (!isBlip) return true;
+    return !merged.some(
+      (other) =>
+        other !== track &&
+        other.fileIndex === track.fileIndex &&
+        track.timestamp > other.timestamp &&
+        track.timestamp < other.lastSeen,
+    );
+  });
+
+  // Pass 3: display normalization + optional global dedupe.
   const seen = new Set<string>();
   const result: TrackEntry[] = [];
-  for (const track of sorted) {
+  for (const track of survivors) {
     const key = trackKey(track.title, track.artist);
     if (opts.removeDuplicates) {
       if (seen.has(key)) continue;

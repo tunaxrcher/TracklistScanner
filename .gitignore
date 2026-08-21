@@ -38,6 +38,10 @@ yarn-error.log*
 /temp/
 /downloads/
 
+# diagnostic script artifacts
+/scripts/.*-tmp/
+/scripts/*-log.txt
+
 # vercel
 .vercel
 

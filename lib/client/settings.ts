@@ -29,7 +29,13 @@ function loadSettings(): AppSettings {
     if (!raw) return DEFAULT_APP_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     return {
-      scan: { ...DEFAULT_SCAN_SETTINGS, ...parsed.scan },
+      scan: {
+        ...DEFAULT_SCAN_SETTINGS,
+        ...parsed.scan,
+        // No longer user-editable; pin to the recognition sweet spot so old
+        // stored values (10s) don't keep degrading accuracy.
+        sampleDuration: DEFAULT_SCAN_SETTINGS.sampleDuration,
+      },
       djpool: { ...DEFAULT_DJPOOL_PREFERENCES, ...parsed.djpool },
     };
   } catch {
