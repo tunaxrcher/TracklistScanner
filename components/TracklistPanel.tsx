@@ -584,9 +584,9 @@ export function TracklistPanel({
         {!job ? (
           <div className="space-y-6">
             <div>
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+              {/* <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
                 What do you want to scan?
-              </label>
+              </label> */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {SOURCES.map((s) => (
                   <button
@@ -626,9 +626,6 @@ export function TracklistPanel({
                     className="w-full bg-transparent py-2.5 text-sm text-text outline-none placeholder:text-muted/60"
                   />
                 </div>
-                <p className="mt-2 text-xs text-muted">
-                  Audio is analyzed directly — no MP3 download required.
-                </p>
               </div>
             )}
 
@@ -700,11 +697,11 @@ export function TracklistPanel({
                 )}
               </div>
             )}
-
+<hr className="h-px border-0 bg-white/20" />
             {/* Scan preset */}
             <div>
               <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
-                Scan Mode
+                MODE
               </label>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {PRESETS.map((p) => (
