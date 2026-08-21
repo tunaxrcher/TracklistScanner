@@ -7,7 +7,7 @@ export function ProgressBar({ value, active = true }: { value: number; active?: 
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
       <div
-        className={`h-full rounded-full bg-accent transition-[width] duration-300 ${active ? "" : "opacity-60"}`}
+        className={`h-full rounded-full bg-accent-gradient transition-[width] duration-300 ${active ? "" : "opacity-60"}`}
         style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
       />
     </div>
@@ -96,7 +96,7 @@ const STATUS_STYLES: Record<JobStatus, { label: string; className: string; spin?
   processing: { label: "Processing", className: "text-sky-300 border-sky-300/30", spin: true },
   completed: { label: "Completed", className: "text-success border-success/30" },
   failed: { label: "Failed", className: "text-danger border-danger/30" },
-  cancelled: { label: "Cancelled", className: "text-muted border-border" },
+  cancelled: { label: "Stopped", className: "text-muted border-border" },
 };
 
 export function StatusBadge({ status }: { status: JobStatus }) {

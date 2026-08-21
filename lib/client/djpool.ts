@@ -1,11 +1,21 @@
 import type { DjPoolCandidate, DjPoolTrackStatus } from "@/lib/types";
 
-export type DjRowStatus = "idle" | "searching" | "downloading" | "done" | "notfound" | "failed";
+export type DjRowStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "searching"
+  | "downloading"
+  | "done"
+  | "notfound"
+  | "failed";
 
 export interface DjRowState {
   status: DjRowStatus;
   fileName?: string;
   error?: string;
+  /** Download progress 0-100 (undefined = size unknown / indeterminate). */
+  progress?: number;
 }
 
 /** Map a server-side job track status onto the table's row status. */
@@ -26,6 +36,35 @@ export function rowStatusFromJob(status: DjPoolTrackStatus): DjRowStatus {
     default:
       return "failed";
   }
+}
+
+/**
+ * Read a response body into a Blob while reporting percent progress.
+ * Falls back to a plain blob() (no progress) when the size is unknown.
+ */
+export async function readBlobWithProgress(
+  res: Response,
+  onProgress: (percent: number) => void,
+): Promise<Blob> {
+  const total = Number(res.headers.get("content-length") ?? 0);
+  if (!res.body || !Number.isFinite(total) || total <= 0) return res.blob();
+
+  const reader = res.body.getReader();
+  const chunks: BlobPart[] = [];
+  let received = 0;
+  let lastPercent = -1;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    const percent = Math.min(100, Math.round((received / total) * 100));
+    if (percent !== lastPercent) {
+      lastPercent = percent;
+      onProgress(percent);
+    }
+  }
+  return new Blob(chunks, { type: res.headers.get("content-type") ?? undefined });
 }
 
 /** Trigger a browser "Save as" for an in-memory blob. */

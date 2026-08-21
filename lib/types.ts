@@ -1,6 +1,6 @@
 // ---------- Shared types (used by both server and client) ----------
 
-export type JobType = "scan" | "download" | "djpool";
+export type JobType = "scan" | "djpool";
 
 export type JobStatus =
   | "queued"
@@ -13,8 +13,6 @@ export type JobStatus =
   | "completed"
   | "failed"
   | "cancelled";
-
-export type DownloadFormat = "mp3" | "m4a" | "original" | "wav";
 
 export type ScanMode = "url" | "file" | "folder";
 
@@ -61,17 +59,6 @@ export const DEFAULT_SCAN_SETTINGS: ScanSettings = {
   keepTempFiles: false,
 };
 
-export interface DownloadSettings {
-  /** MP3 bitrate in kbps */
-  mp3Quality: number;
-  keepTempFiles: boolean;
-}
-
-export const DEFAULT_DOWNLOAD_SETTINGS: DownloadSettings = {
-  mp3Quality: 320,
-  keepTempFiles: false,
-};
-
 export interface MediaInfo {
   title?: string;
   thumbnail?: string;
@@ -100,20 +87,6 @@ export interface ScanState {
   songsFound: number;
   tracks: TrackEntry[];
   info?: MediaInfo;
-}
-
-export interface DownloadState {
-  url: string;
-  format: DownloadFormat;
-  info?: MediaInfo;
-  /** 0-100 */
-  percent: number;
-  /** e.g. "1.24MiB/s" */
-  speed?: string;
-  eta?: string;
-  fileName?: string;
-  fileSize?: number;
-  statusText?: string;
 }
 
 // ---------- DJ Pool download ----------
@@ -202,6 +175,5 @@ export interface Job {
   createdAt: number;
   error?: string;
   scan?: ScanState;
-  download?: DownloadState;
   djpool?: DjPoolState;
 }

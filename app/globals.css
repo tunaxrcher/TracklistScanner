@@ -1,15 +1,15 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-bg: #0a0c10;
-  --color-surface: #11141a;
-  --color-surface-2: #171b23;
-  --color-border: #232936;
-  --color-border-strong: #2f3747;
-  --color-text: #e7eaf0;
-  --color-muted: #8b93a5;
-  --color-accent: #7c6cf6;
-  --color-accent-soft: #2a2650;
+  --color-bg: #050507;
+  --color-surface: #0d0d13;
+  --color-surface-2: #14141d;
+  --color-border: #1f1f2b;
+  --color-border-strong: #2d2d3d;
+  --color-text: #f2f2f7;
+  --color-muted: #8d8da2;
+  --color-accent: #f31260;
+  --color-accent-soft: #33081c;
   --color-success: #34d399;
   --color-danger: #f87171;
   --font-sans: var(--font-geist-sans);
@@ -24,6 +24,56 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Primary gradient (purple → crimson → pink, like the brand reference) */
+.bg-accent-gradient {
+  background-image: linear-gradient(135deg, #8b12f0 0%, #ef1257 55%, #ff0f9a 100%);
+}
+
+.text-accent-gradient {
+  background-image: linear-gradient(135deg, #a855f7 0%, #f31260 60%, #ff2fa0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Player seek bar (gradient fill applied inline per progress) */
+.player-range {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--color-surface-2);
+  outline: none;
+  cursor: pointer;
+}
+
+.player-range:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.player-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 13px;
+  width: 13px;
+  border-radius: 9999px;
+  border: none;
+  background: #ffffff;
+  box-shadow: 0 0 8px rgba(243, 18, 96, 0.7);
+  cursor: pointer;
+}
+
+.player-range::-moz-range-thumb {
+  height: 13px;
+  width: 13px;
+  border-radius: 9999px;
+  border: none;
+  background: #ffffff;
+  box-shadow: 0 0 8px rgba(243, 18, 96, 0.7);
+  cursor: pointer;
 }
 
 ::selection {

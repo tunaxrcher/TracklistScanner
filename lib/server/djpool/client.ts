@@ -206,14 +206,17 @@ export function filenameFromDisposition(disposition: string): string | undefined
  * Open a pool file for streaming using the authenticated session. Returns the
  * raw fetch Response so callers can pipe it straight to an HTTP response.
  */
-export async function openPoolFile(url: string, signal?: AbortSignal): Promise<Response> {
+export async function openPoolFile(url: string, signal?: AbortSignal, range?: string): Promise<Response> {
   const session = await getSession();
+  const headers: Record<string, string> = {
+    "User-Agent": UA,
+    Cookie: cookieHeader(session.cookies),
+    Referer: `${BASE}/`,
+  };
+  // Forward Range so <audio> seeking works when the pool's server supports it.
+  if (range) headers.Range = range;
   const res = await fetch(url, {
-    headers: {
-      "User-Agent": UA,
-      Cookie: cookieHeader(session.cookies),
-      Referer: `${BASE}/`,
-    },
+    headers,
     redirect: "follow",
     signal,
   });

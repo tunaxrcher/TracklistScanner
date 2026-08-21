@@ -1,15 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AudioLines, Download, ListMusic, Settings, TriangleAlert } from "lucide-react";
-import { DownloadPanel } from "@/components/DownloadPanel";
+import { AudioLines, Settings, TriangleAlert } from "lucide-react";
 import { TracklistPanel } from "@/components/TracklistPanel";
 import { SettingsModal } from "@/components/SettingsModal";
-import { RecentSidebar } from "@/components/RecentSidebar";
 import { useSettings } from "@/lib/client/settings";
-import type { RecentItem } from "@/lib/client/recent";
-
-type Tab = "download" | "tracklist";
 
 interface Health {
   ytDlp: boolean;
@@ -20,16 +15,9 @@ interface Health {
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("download");
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useSettings();
   const [health, setHealth] = useState<Health | null>(null);
-  const [prefill, setPrefill] = useState<{ tab: Tab; url: string; key: number } | null>(null);
-
-  const onSelectRecent = (item: RecentItem) => {
-    setTab(item.kind);
-    setPrefill({ tab: item.kind, url: item.url, key: Date.now() });
-  };
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -69,18 +57,16 @@ export default function Home() {
   if (health && (!health.ffmpeg || !health.ffprobe)) missing.push("FFmpeg");
 
   return (
-    <div className="mx-auto min-h-screen max-w-5xl px-4 py-8 lg:px-8 lg:py-12">
+    <div className="mx-auto min-h-screen max-w-6xl px-4 py-8 lg:px-8 lg:py-10">
       {/* Header */}
       <header className="mb-8 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-gradient text-white">
             <AudioLines size={20} />
           </div>
           <div>
-            <h1 className="text-lg font-semibold leading-tight">
-              Audio Downloader <span className="text-muted">&</span> Tracklist Scanner
-            </h1>
-            <p className="text-xs text-muted">yt-dlp · FFmpeg · Shazam · ACRCloud</p>
+            <h1 className="text-lg font-semibold leading-tight">Tracklist Scanner</h1>
+            <p className="text-xs text-muted">yt-dlp · FFmpeg · Shazam · ACRCloud · DJ Pool</p>
           </div>
         </div>
         <button
@@ -100,58 +86,12 @@ export default function Home() {
         </div>
       )}
 
-      <div className="lg:grid lg:grid-cols-[15rem_1fr] lg:gap-6">
-        {/* Recent sidebar */}
-        <div className="mb-6 lg:mb-0">
-          <RecentSidebar onSelect={onSelectRecent} />
-        </div>
+      <main>
+        <TracklistPanel settings={settings} djPoolConfigured={health?.djPool ?? null} />
+      </main>
 
-        <div>
-          {/* Tabs */}
-          <nav className="mb-6 grid grid-cols-2 gap-2 rounded-2xl border border-border bg-surface p-1.5">
-            {(
-              [
-                { id: "download", label: "Download", icon: <Download size={15} /> },
-                { id: "tracklist", label: "Tracklist", icon: <ListMusic size={15} /> },
-              ] as { id: Tab; label: string; icon: React.ReactNode }[]
-            ).map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                className={`flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${
-                  tab === t.id ? "bg-accent text-white" : "text-muted hover:text-text"
-                }`}
-              >
-                {t.icon}
-                {t.label}
-              </button>
-            ))}
-          </nav>
-
-          {/* Panels stay mounted so switching tabs never interrupts a running job */}
-          <main className="rounded-2xl border border-border bg-surface/50 p-5 lg:p-7">
-            <div className={tab === "download" ? "" : "hidden"}>
-              <DownloadPanel
-                settings={settings}
-                prefillUrl={prefill?.tab === "download" ? prefill.url : undefined}
-                prefillKey={prefill?.tab === "download" ? prefill.key : undefined}
-              />
-            </div>
-            <div className={tab === "tracklist" ? "" : "hidden"}>
-              <TracklistPanel
-                settings={settings}
-                djPoolConfigured={health?.djPool ?? null}
-                prefillUrl={prefill?.tab === "tracklist" ? prefill.url : undefined}
-                prefillKey={prefill?.tab === "tracklist" ? prefill.key : undefined}
-              />
-            </div>
-          </main>
-        </div>
-      </div>
-
-      <footer className="mt-8 text-center text-xs text-muted/60">
-        Download = get the audio file · Tracklist = find out which songs are inside
+      <footer className="mt-10 text-center text-xs text-muted/60">
+        Scan any URL or file to find out which songs are inside — then grab them from DJ Pool.
       </footer>
 
       {showSettings && (

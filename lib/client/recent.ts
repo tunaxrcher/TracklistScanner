@@ -1,14 +1,14 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-
-export type RecentKind = "download" | "tracklist";
+import type { TrackEntry } from "@/lib/types";
 
 export interface RecentItem {
-  kind: RecentKind;
   url: string;
   title?: string;
   at: number;
+  /** Tracklist saved from the last completed scan of this URL. */
+  tracks?: TrackEntry[];
 }
 
 const STORAGE_KEY = "audio-tool-recent-v1";
@@ -38,25 +38,25 @@ function persist(items: RecentItem[]): void {
   window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
 }
 
-/** Upsert by (kind + url): refresh timestamp, fill title, move to the front. */
-export function addRecent(kind: RecentKind, url: string, title?: string): void {
+/** Upsert by url: refresh timestamp, fill title/tracks, move to the front. */
+export function addRecent(url: string, title?: string, tracks?: TrackEntry[]): void {
   const trimmed = url.trim();
   if (!trimmed) return;
   const items = cache ?? load();
-  const existing = items.find((i) => i.kind === kind && i.url === trimmed);
-  const rest = items.filter((i) => !(i.kind === kind && i.url === trimmed));
+  const existing = items.find((i) => i.url === trimmed);
+  const rest = items.filter((i) => i.url !== trimmed);
   const next: RecentItem = {
-    kind,
     url: trimmed,
     title: title ?? existing?.title,
+    tracks: tracks ?? existing?.tracks,
     at: Date.now(),
   };
   persist([next, ...rest].slice(0, MAX_ITEMS));
 }
 
-export function removeRecent(kind: RecentKind, url: string): void {
+export function removeRecent(url: string): void {
   const items = cache ?? load();
-  persist(items.filter((i) => !(i.kind === kind && i.url === url)));
+  persist(items.filter((i) => i.url !== url));
 }
 
 export function clearRecent(): void {

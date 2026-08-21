@@ -44,8 +44,6 @@ export function SettingsModal({
 
   const scan = (patch: Partial<AppSettings["scan"]>) =>
     setDraft((d) => ({ ...d, scan: { ...d.scan, ...patch } }));
-  const download = (patch: Partial<AppSettings["download"]>) =>
-    setDraft((d) => ({ ...d, download: { ...d.download, ...patch } }));
   const djpool = (patch: Partial<AppSettings["djpool"]>) =>
     setDraft((d) => ({ ...d, djpool: { ...d.djpool, ...patch } }));
 
@@ -120,27 +118,11 @@ export function SettingsModal({
             </Row>
           </Section>
 
-          <Section title="Download">
-            <Row label="MP3 Quality">
-              <select
-                value={draft.download.mp3Quality}
-                onChange={(e) => download({ mp3Quality: Number(e.target.value) })}
-                className="rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-sm text-text outline-none focus:border-accent"
-              >
-                {[320, 256, 192, 128].map((q) => (
-                  <option key={q} value={q}>
-                    {q} kbps
-                  </option>
-                ))}
-              </select>
-            </Row>
+          <Section title="Files">
             <Row label="Keep Temporary Files" hint="Skip auto-cleanup of /temp/jobs">
               <Toggle
-                checked={draft.download.keepTempFiles && draft.scan.keepTempFiles}
-                onChange={(v) => {
-                  download({ keepTempFiles: v });
-                  scan({ keepTempFiles: v });
-                }}
+                checked={draft.scan.keepTempFiles}
+                onChange={(v) => scan({ keepTempFiles: v })}
               />
             </Row>
           </Section>

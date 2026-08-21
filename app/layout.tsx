@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Audio Downloader & Tracklist Scanner",
-  description: "Download audio and scan media for songs with Shazam + ACRCloud",
+  title: "Tracklist Scanner",
+  description: "Scan media for songs with Shazam + ACRCloud, then grab them from DJ Pool",
 };
 
 export default function RootLayout({

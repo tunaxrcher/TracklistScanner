@@ -1,17 +1,14 @@
-# Audio Downloader & Tracklist Scanner
+# Tracklist Scanner
 
-Web app with two independent tools:
-
-- **DOWNLOAD** — download audio from YouTube (or any yt-dlp-supported URL) as MP3 HQ (cover + metadata), M4A, Original (no re-encode), or WAV.
-- **TRACKLIST** — find out **which songs are inside** a URL, a local audio file, or a whole folder — *without* downloading an MP3 first. Recognition uses **Shazam (primary)** with **ACRCloud (fallback)**.
+Find out **which songs are inside** a URL, a local audio file, or a whole folder — *without* downloading an MP3 first. Recognition uses **Shazam (primary)** with **ACRCloud (fallback)**. Once a tracklist is found, each song can be pulled straight from **DJ Pool Records**.
 
 ## Requirements
 
 | Dependency | Purpose | Install (Windows) |
 |---|---|---|
 | Node.js ≥ 20 | app runtime | https://nodejs.org |
-| yt-dlp | URL download / URL scan | `winget install yt-dlp.yt-dlp` |
-| FFmpeg + ffprobe | sampling, conversion, metadata | `winget install Gyan.FFmpeg` |
+| yt-dlp | fetch URL audio for scanning | `winget install yt-dlp.yt-dlp` |
+| FFmpeg + ffprobe | sampling, duration probing | `winget install Gyan.FFmpeg` |
 
 macOS: `brew install yt-dlp ffmpeg` · Linux: `sudo apt install yt-dlp ffmpeg`
 
@@ -58,14 +55,14 @@ Long work never blocks an HTTP request:
 
 ```text
 POST /api/jobs/scan          → { jobId }        (multipart: mode, url | files, settings)
-POST /api/jobs/download      → { jobId }        (json: url, format, settings)
 POST /api/jobs/djpool        → { jobId }        (json: tracks[], preferences — bundle/zip)
 POST /api/djpool/download    → audio stream     (json: title+artist | downloadUrl — one track)
-POST /api/djpool/search      → { candidates }   (json: title, artist — version picker)
+POST /api/djpool/search      → { candidates }   (json: title, artist — availability + picker)
+GET  /api/djpool/stream?u=   → inline audio     (in-browser preview player)
 GET  /api/jobs/{id}          → job snapshot
 GET  /api/jobs/{id}/events   → SSE live progress
 POST /api/jobs/{id}/cancel   → stop yt-dlp/FFmpeg, cleanup temp
-GET  /api/jobs/{id}/file     → completed download file (single track, or .zip bundle)
+GET  /api/jobs/{id}/file     → finished bundle (single track, or .zip)
 GET  /api/health             → dependency check
 ```
 
@@ -84,10 +81,12 @@ Tracklist ─► login (cached session + WP nonce) ─► search files index ─
 - Tracks with no confident match are reported as **Not found** instead of grabbing the wrong file.
 - Requests are paced sequentially to stay polite to the site.
 
-The whole feature lives in the tracklist table itself:
+The whole feature lives in the tracklist itself (a numbered multi-column list):
 
-- Each row has a **DJ Pool** column — click **Get** to download that single track straight to your browser (best match auto-picked), or the **▾** caret to open a version picker (Clean/Dirty/remix/etc. with scores and sizes) and choose manually.
-- **Download All** in the toolbar runs the bundle job across every row, shows per-row progress in the same column, and finishes with a one-click **Download ZIP**.
+- When a scan finishes (or is stopped early) the app **auto-probes** every row against DJ Pool, so each row immediately shows **Not found** or a ready **Get** button (no click needed).
+- Hover a cover and press **play** to preview the matched file in the bottom player bar (streamed inline via `/api/djpool/stream`). The version picker also has per-version preview buttons.
+- Click **Get** to download that single track straight to your browser (best match auto-picked, reusing the probe result), or the **▾** caret to open a version picker (Clean/Dirty/remix/etc. with scores and sizes) and choose manually.
+- **Download All** in the toolbar runs the bundle job across every row, shows per-row progress, and finishes with a one-click **Download ZIP**.
 
 Temp files live in `temp/jobs/{jobId}/` and are removed automatically when a job finishes or is cancelled (unless **Keep Temporary Files** is on). Finished downloads are stored in `downloads/{jobId}/`.
 
@@ -102,4 +101,3 @@ Temp files live in `temp/jobs/{jobId}/` and are removed automatically when a job
 ## Export
 
 TXT / CSV / JSON with toggles for timestamps, artist, filename, and duplicate removal — generated client-side from the scan result.
-# TracklistScanner

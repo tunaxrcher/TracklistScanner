@@ -3,22 +3,18 @@
 import { useSyncExternalStore } from "react";
 import {
   DEFAULT_DJPOOL_PREFERENCES,
-  DEFAULT_DOWNLOAD_SETTINGS,
   DEFAULT_SCAN_SETTINGS,
   type DjPoolPreferences,
-  type DownloadSettings,
   type ScanSettings,
 } from "@/lib/types";
 
 export interface AppSettings {
   scan: ScanSettings;
-  download: DownloadSettings;
   djpool: DjPoolPreferences;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   scan: DEFAULT_SCAN_SETTINGS,
-  download: DEFAULT_DOWNLOAD_SETTINGS,
   djpool: DEFAULT_DJPOOL_PREFERENCES,
 };
 
@@ -34,7 +30,6 @@ function loadSettings(): AppSettings {
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     return {
       scan: { ...DEFAULT_SCAN_SETTINGS, ...parsed.scan },
-      download: { ...DEFAULT_DOWNLOAD_SETTINGS, ...parsed.download },
       djpool: { ...DEFAULT_DJPOOL_PREFERENCES, ...parsed.djpool },
     };
   } catch {

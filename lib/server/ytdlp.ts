@@ -1,10 +1,10 @@
 import { readdirSync } from "fs";
 import path from "path";
 import type { ChildProcess } from "child_process";
-import { resolveYtDlp, resolveFfmpeg } from "@/lib/server/bin";
+import { resolveYtDlp } from "@/lib/server/bin";
 import { run } from "@/lib/server/proc";
 import { AppError, classifyYtDlpError } from "@/lib/errors";
-import type { DownloadFormat, MediaInfo } from "@/lib/types";
+import type { MediaInfo } from "@/lib/types";
 
 export interface YtDlpContext {
   signal?: AbortSignal;
@@ -61,93 +61,6 @@ function parseProgressLine(line: string): DownloadProgressEvent | null {
     speed: m[2] && m[2] !== "Unknown" ? m[2] : undefined,
     eta: m[3] && m[3] !== "Unknown" ? m[3] : undefined,
   };
-}
-
-function buildFormatArgs(format: DownloadFormat, mp3Quality: number): string[] {
-  switch (format) {
-    case "mp3":
-      return [
-        "-f", "bestaudio/best",
-        "-x",
-        "--audio-format", "mp3",
-        "--audio-quality", `${mp3Quality}K`,
-        "--embed-metadata",
-        "--embed-thumbnail",
-        "--convert-thumbnails", "jpg",
-      ];
-    case "m4a":
-      return [
-        "-f", "bestaudio[ext=m4a]/bestaudio/best",
-        "-x",
-        "--audio-format", "m4a",
-        "--embed-metadata",
-        "--embed-thumbnail",
-        "--convert-thumbnails", "jpg",
-      ];
-    case "wav":
-      return ["-f", "bestaudio/best", "-x", "--audio-format", "wav"];
-    case "original":
-      // Best audio stream, kept in its original codec/container. No re-encode.
-      return ["-f", "bestaudio/best"];
-  }
-}
-
-/**
- * Download audio into `outDir` with progress callbacks.
- * Returns the absolute path of the resulting file.
- */
-export async function downloadAudio(
-  url: string,
-  format: DownloadFormat,
-  outDir: string,
-  mp3Quality: number,
-  onProgress: (e: DownloadProgressEvent) => void,
-  ctx: YtDlpContext = {},
-): Promise<string> {
-  const ytdlp = resolveYtDlp();
-  const ffmpeg = resolveFfmpeg();
-
-  const args = [
-    "--no-playlist",
-    "--no-warnings",
-    "--newline",
-    "--progress",
-    "--ffmpeg-location", ffmpeg,
-    "-o", path.join(outDir, "%(title).150B [%(id)s].%(ext)s"),
-    ...buildFormatArgs(format, mp3Quality),
-    "--", url,
-  ];
-
-  const handleLine = (line: string) => {
-    const progress = parseProgressLine(line);
-    if (progress) {
-      onProgress(progress);
-      return;
-    }
-    if (line.includes("[ExtractAudio]")) onProgress({ statusText: "Converting audio…" });
-    else if (line.includes("[EmbedThumbnail]")) onProgress({ statusText: "Embedding cover…" });
-    else if (line.includes("[Metadata]")) onProgress({ statusText: "Writing metadata…" });
-    else if (line.includes("[download] Destination")) onProgress({ statusText: "Downloading…" });
-  };
-
-  const { code, stderr } = await run(ytdlp, args, {
-    signal: ctx.signal,
-    onSpawn: ctx.onSpawn,
-    onStdoutLine: handleLine,
-    onStderrLine: handleLine,
-  });
-  if (code !== 0) {
-    console.warn("[yt-dlp download]", stderr.slice(0, 800));
-    throw classifyYtDlpError(stderr);
-  }
-
-  // Locate the final output file (largest file in outDir, ignoring temp parts).
-  const files = readdirSync(outDir).filter(
-    (f) => !f.endsWith(".part") && !f.endsWith(".ytdl") && !f.endsWith(".jpg") && !f.endsWith(".webp"),
-  );
-  if (files.length === 0) throw new AppError("UNKNOWN", "Download finished but no file was produced.");
-  files.sort((a, b) => a.localeCompare(b));
-  return path.join(outDir, files[0]);
 }
 
 /**
