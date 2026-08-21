@@ -149,6 +149,8 @@ export interface DjPoolTrack {
   title: string;
   artist: string;
   status: DjPoolTrackStatus;
+  /** Download progress 0-100 while status is "downloading". */
+  progress?: number;
   /** Chosen best candidate. */
   best?: DjPoolCandidate;
   /** All ranked candidates (top few), for manual override in the UI. */

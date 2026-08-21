@@ -1,12 +1,11 @@
 import { NextRequest } from "next/server";
 import {
-  searchPoolFiles,
   openPoolFile,
   isDjPoolConfigured,
   isPoolUrl,
   filenameFromDisposition,
 } from "@/lib/server/djpool/client";
-import { buildQuery, rankCandidates } from "@/lib/server/djpool/matcher";
+import { findCandidates } from "@/lib/server/djpool/matcher";
 import { AppError, toUserMessage } from "@/lib/errors";
 import { DEFAULT_DJPOOL_PREFERENCES, type DjPoolPreferences } from "@/lib/types";
 
@@ -39,12 +38,10 @@ export async function POST(request: NextRequest) {
     if (!url) {
       const title = String(body.title ?? "").trim();
       const artist = String(body.artist ?? "").trim();
-      const query = buildQuery(title, artist);
-      if (!query) return jsonError("Empty query.", 400);
+      if (!title) return jsonError("Empty query.", 400);
 
       const prefs: DjPoolPreferences = { ...DEFAULT_DJPOOL_PREFERENCES, ...body.preferences };
-      const files = await searchPoolFiles(query, 40, 0);
-      const { candidates, matched } = rankCandidates(title, artist, files, prefs);
+      const { candidates, matched } = await findCandidates(title, artist, prefs);
       if (!matched) return jsonError("notfound", 404);
 
       const best = candidates[0];

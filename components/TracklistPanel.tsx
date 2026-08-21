@@ -157,7 +157,12 @@ export function TracklistPanel({
       djState.tracks.forEach((jt, i) => {
         const id = djJobTrackIds.current[i];
         if (!id) return;
-        next[id] = { status: rowStatusFromJob(jt.status), fileName: jt.fileName, error: jt.error };
+        next[id] = {
+          status: rowStatusFromJob(jt.status),
+          fileName: jt.fileName,
+          error: jt.error,
+          progress: jt.progress,
+        };
       });
       return next;
     });
@@ -298,8 +303,15 @@ export function TracklistPanel({
     [closePicker],
   );
 
+  // Tracks the bundle download will actually attempt: everything except rows
+  // the probe (or an earlier attempt) already marked "Not found".
+  const downloadableTracks = useMemo(
+    () => displayTracks.filter((t) => djRows[t.id]?.status !== "notfound"),
+    [displayTracks, djRows],
+  );
+
   const downloadAll = useCallback(() => {
-    const list = displayTracks;
+    const list = downloadableTracks;
     djJobTrackIds.current = list.map((t) => t.id);
     setDjRows((prev) => {
       const next = { ...prev };
@@ -316,7 +328,7 @@ export function TracklistPanel({
         }),
       }),
     );
-  }, [displayTracks, djJob, settings.djpool]);
+  }, [downloadableTracks, djJob, settings.djpool]);
 
   // Auto-probe DJ Pool availability once results are ready (scan completed or
   // stopped, or a Recent tracklist restored), so each row shows "Not found" or
@@ -372,9 +384,11 @@ export function TracklistPanel({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ title: group.title, artist: group.artist, preferences: settings.djpool }),
           });
-          const data = (await res.json()) as { candidates?: DjPoolCandidate[] };
+          const data = (await res.json()) as { candidates?: DjPoolCandidate[]; matched?: boolean };
           if (cancelled) return;
-          const candidates = res.ok ? data.candidates ?? [] : [];
+          // Only a strong match (same song, not just a title collision) counts
+          // as available; loose candidates stay reachable via the picker.
+          const candidates = res.ok && data.matched ? data.candidates ?? [] : [];
           if (candidates.length > 0) {
             setDjCandidates((prev) => {
               const next = { ...prev };
@@ -892,11 +906,19 @@ export function TracklistPanel({
                   <button
                     type="button"
                     onClick={downloadAll}
-                    disabled={djPoolConfigured === false}
-                    title={djPoolConfigured === false ? "DJ Pool account not configured" : undefined}
+                    disabled={djPoolConfigured === false || downloadableTracks.length === 0}
+                    title={
+                      djPoolConfigured === false
+                        ? "DJ Pool account not configured"
+                        : downloadableTracks.length === 0
+                          ? "No tracks available on DJ Pool"
+                          : downloadableTracks.length < displayTracks.length
+                            ? `${displayTracks.length - downloadableTracks.length} not found on DJ Pool — excluded`
+                            : undefined
+                    }
                     className="flex items-center gap-1.5 rounded-lg bg-accent-gradient px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    <DownloadCloud size={13} /> Download All ({displayTracks.length})
+                    <DownloadCloud size={13} /> Download All ({downloadableTracks.length})
                   </button>
                 )}
                 {djRunning && djState && (
@@ -959,13 +981,13 @@ export function TracklistPanel({
                 >
                   <Sparkles size={13} /> Clean Tracklist
                 </button>
-                <button
+                {/* <button
                   type="button"
                   onClick={() => setShowExport(true)}
                   className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-muted hover:text-text"
                 >
                   <Share size={13} /> Export
-                </button>
+                </button> */}
               </div>
             )}
           </div>

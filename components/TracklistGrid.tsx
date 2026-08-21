@@ -59,12 +59,14 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
       {state === "downloading" && (
         <div className="flex w-28 items-center gap-2" title="Downloading from DJ Pool">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
-            <div
-              className={`h-full rounded-full bg-accent-gradient transition-[width] duration-200 ${
-                progress == null ? "w-full animate-pulse-soft" : ""
-              }`}
-              style={progress != null ? { width: `${progress}%` } : undefined}
-            />
+            {progress != null ? (
+              <div
+                className="h-full rounded-full bg-accent-gradient transition-[width] duration-200"
+                style={{ width: `${progress}%` }}
+              />
+            ) : (
+              <div className="h-full w-2/5 rounded-full bg-accent-gradient animate-slide-x" />
+            )}
           </div>
           <span className="w-8 shrink-0 text-right font-mono text-[10px] text-muted">
             {progress != null ? `${progress}%` : "…"}

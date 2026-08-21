@@ -6,8 +6,8 @@ import { randomUUID } from "crypto";
 import { jobManager } from "@/lib/server/jobs";
 import { jobDownloadDir } from "@/lib/server/paths";
 import { toUserMessage } from "@/lib/errors";
-import { searchPoolFiles, downloadPoolFile } from "@/lib/server/djpool/client";
-import { buildQuery, rankCandidates } from "@/lib/server/djpool/matcher";
+import { downloadPoolFile } from "@/lib/server/djpool/client";
+import { buildQuery, findCandidates } from "@/lib/server/djpool/matcher";
 import { DEFAULT_DJPOOL_PREFERENCES, type DjPoolPreferences, type DjPoolTrack } from "@/lib/types";
 
 export interface DjPoolTrackInput {
@@ -79,8 +79,7 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
 
     patch(track.id, (t) => (t.status = "searching"));
     try {
-      const files = await searchPoolFiles(track.query, 40, 0);
-      const { candidates, matched } = rankCandidates(track.title, track.artist, files, prefs);
+      const { candidates, matched } = await findCandidates(track.title, track.artist, prefs);
 
       if (!matched) {
         patch(track.id, (t) => {
@@ -113,7 +112,14 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
       usedNames.add(fileName.toLowerCase());
 
       const dest = path.join(outDir, fileName);
-      const { bytes, serverName } = await downloadPoolFile(best.download, dest, signal);
+      const { bytes, serverName } = await downloadPoolFile(best.download, dest, signal, (percent) => {
+        // Every 5% is plenty for the UI and keeps SSE payload volume low.
+        if (percent % 5 === 0 || percent === 100) {
+          patch(track.id, (t) => {
+            t.progress = percent;
+          });
+        }
+      });
       const size = (() => {
         try {
           return statSync(dest).size;
@@ -124,6 +130,7 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
 
       patch(track.id, (t) => {
         t.status = "downloaded";
+        t.progress = undefined;
         t.fileName = serverName ? sanitizeFileName(serverName) : fileName;
         t.fileSize = size;
       });

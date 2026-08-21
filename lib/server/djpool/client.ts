@@ -1,6 +1,6 @@
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
-import { Readable } from "stream";
+import { Readable, Transform } from "stream";
 import { AppError } from "@/lib/errors";
 
 const BASE = "https://djpoolrecords.com";
@@ -243,10 +243,32 @@ export async function downloadPoolFile(
   url: string,
   destPath: string,
   signal?: AbortSignal,
+  onProgress?: (percent: number) => void,
 ): Promise<{ bytes: number; serverName?: string }> {
   const res = await openPoolFile(url, signal);
   const serverName = filenameFromDisposition(res.headers.get("content-disposition") ?? "");
-  const lengthHeader = Number(res.headers.get("content-length") ?? 0);
-  await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(destPath));
-  return { bytes: lengthHeader, serverName };
+  const total = Number(res.headers.get("content-length") ?? 0);
+
+  let received = 0;
+  let lastPercent = -1;
+  const counter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      received += chunk.length;
+      if (onProgress && total > 0) {
+        const percent = Math.min(100, Math.round((received / total) * 100));
+        if (percent !== lastPercent) {
+          lastPercent = percent;
+          onProgress(percent);
+        }
+      }
+      cb(null, chunk);
+    },
+  });
+
+  await pipeline(
+    Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+    counter,
+    createWriteStream(destPath),
+  );
+  return { bytes: total || received, serverName };
 }
