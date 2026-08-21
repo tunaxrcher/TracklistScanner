@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { ListMusic, Trash2, X } from "lucide-react";
+import { FileAudio, ListMusic, Trash2, X } from "lucide-react";
 import { clearRecent, removeRecent, useRecent, type RecentItem } from "@/lib/client/recent";
 import { youtubeThumb } from "@/lib/client/youtube";
 
@@ -62,7 +62,7 @@ export function RecentRow({
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-muted">
-                      <ListMusic size={20} />
+                      {item.kind === "file" ? <FileAudio size={20} /> : <ListMusic size={20} />}
                     </div>
                   )}
                 </div>

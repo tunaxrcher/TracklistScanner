@@ -386,8 +386,8 @@ export function TracklistPanel({
     onPlayCandidate: playCandidate,
   };
 
-  const resetAll = () => {
-    reset();
+  /** Clear every result-related state (DJ Pool rows, bundle job, player, …). */
+  const clearResults = () => {
     djJob.reset();
     setDjRows({});
     setDjCandidates({});
@@ -397,14 +397,25 @@ export function TracklistPanel({
     djJobTrackIds.current = [];
     probedJobId.current = null;
     setCleaned(false);
+  };
+
+  const resetAll = () => {
+    reset();
+    clearResults();
     setFiles([]);
     setUrl("");
   };
 
   // Clicking a Recent item restores its saved tracklist instantly;
-  // items without saved tracks just prefill the URL for a fresh scan.
+  // URL items without saved tracks just prefill the URL for a fresh scan.
   const onSelectRecent = (item: RecentItem) => {
     if (running || starting) return;
+    if (item.kind === "file") {
+      if (!item.tracks || item.tracks.length === 0) return;
+      resetAll();
+      setRestored({ url: item.url, title: item.title, tracks: item.tracks });
+      return;
+    }
     resetAll();
     setMode("url");
     setUrl(item.url);
@@ -436,14 +447,26 @@ export function TracklistPanel({
     if (scanTitle && mode === "url" && url) addRecent(url, scanTitle);
   }, [scanTitle, mode, url]);
 
-  // Once a URL scan ends, save its tracklist so Recent can restore it later.
+  // Once a scan ends, save its tracklist so Recent can restore it later.
+  // File/folder scans get a `file:` pseudo-key — they can't be re-scanned from
+  // Recent (the file lives on the user's disk) but their result can be reopened.
   useEffect(() => {
-    if (!done || !scan || scan.mode !== "url" || scan.tracks.length === 0 || !url) return;
-    addRecent(url, scan.info?.title, scan.tracks);
-  }, [done, scan, url]);
+    if (!done || !scan || scan.tracks.length === 0) return;
+    if (scan.mode === "url") {
+      if (url) addRecent(url, scan.info?.title, scan.tracks);
+    } else {
+      const first = files[0]?.name;
+      if (!first) return;
+      const name = files.length > 1 ? `${first} +${files.length - 1} more` : first;
+      addRecent(`file:${name}`, name, scan.tracks, "file");
+    }
+  }, [done, scan, url, files]);
 
   const beginScan = () => {
-    setRestored(null);
+    // The form can be visible alongside a restored result — make sure no DJ
+    // Pool state (old ZIP bundle, row statuses, probe cache) leaks into the
+    // new scan.
+    clearResults();
     if (mode === "url") addRecent(url.trim());
     void start(() => {
       const form = new FormData();

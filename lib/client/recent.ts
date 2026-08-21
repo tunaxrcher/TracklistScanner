@@ -4,11 +4,14 @@ import { useSyncExternalStore } from "react";
 import type { TrackEntry } from "@/lib/types";
 
 export interface RecentItem {
+  /** URL for url scans, or a `file:` pseudo-key for local file/folder scans. */
   url: string;
   title?: string;
   at: number;
-  /** Tracklist saved from the last completed scan of this URL. */
+  /** Tracklist saved from the last completed scan of this source. */
   tracks?: TrackEntry[];
+  /** Local file/folder scans can only restore their saved tracklist. */
+  kind?: "url" | "file";
 }
 
 const STORAGE_KEY = "audio-tool-recent-v1";
@@ -38,8 +41,13 @@ function persist(items: RecentItem[]): void {
   window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
 }
 
-/** Upsert by url: refresh timestamp, fill title/tracks, move to the front. */
-export function addRecent(url: string, title?: string, tracks?: TrackEntry[]): void {
+/** Upsert by url/key: refresh timestamp, fill title/tracks, move to the front. */
+export function addRecent(
+  url: string,
+  title?: string,
+  tracks?: TrackEntry[],
+  kind: "url" | "file" = "url",
+): void {
   const trimmed = url.trim();
   if (!trimmed) return;
   const items = cache ?? load();
@@ -49,6 +57,7 @@ export function addRecent(url: string, title?: string, tracks?: TrackEntry[]): v
     url: trimmed,
     title: title ?? existing?.title,
     tracks: tracks ?? existing?.tracks,
+    kind,
     at: Date.now(),
   };
   persist([next, ...rest].slice(0, MAX_ITEMS));
