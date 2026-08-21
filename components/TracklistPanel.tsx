@@ -78,9 +78,11 @@ async function collectFromDirectory(handle: FileSystemDirectoryHandle): Promise<
 export function TracklistPanel({
   settings,
   djPoolConfigured,
+  acrConfigured,
 }: {
   settings: AppSettings;
   djPoolConfigured: boolean | null;
+  acrConfigured: boolean | null;
 }) {
   const [mode, setMode] = useState<ScanMode>("url");
   const [preset, setPreset] = useState<ScanPreset>("thorough");
@@ -781,14 +783,35 @@ export function TracklistPanel({
               )}
 
               {(scan.samplesFailed ?? 0) > 0 && (
-                <div className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
+                <div className="flex items-start gap-2.5 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
                   <TriangleAlert size={15} className="mt-0.5 shrink-0" />
-                  <span>
-                    {scan.samplesFailed} sample{scan.samplesFailed === 1 ? "" : "s"} could not be
-                    checked (Shazam rate limit). Results may be incomplete — the scanner slows down
-                    automatically, but for full coverage wait a few minutes and rescan, or add
-                    ACRCloud keys as a fallback.
-                  </span>
+                  <div className="space-y-1.5">
+                    <p className="font-medium">
+                      Shazam temporarily blocked {scan.samplesFailed} check
+                      {scan.samplesFailed === 1 ? "" : "s"} (rate limit)
+                    </p>
+                    <ul className="list-disc space-y-1 pl-4 text-[13px] text-amber-300/80">
+                      <li>
+                        Only {scan.samplesFailed === 1 ? "one sample point was" : "a few sample points were"} skipped
+                        — usually not a whole song, since each song is checked at several points.
+                      </li>
+                      <li>
+                        The scanner handles this itself: it slows down and re-checks any large
+                        uncovered stretch at the end of the scan.
+                      </li>
+                      <li>
+                        Act only if a song looks missing (a big jump between timestamps): wait a
+                        few minutes, then press <span className="font-medium">Rescan &amp; Merge</span> —
+                        found songs are kept.
+                      </li>
+                      {acrConfigured === false && (
+                        <li>
+                          Tip: adding ACRCloud keys in Settings gives the scanner a second
+                          recognition service to fall back on.
+                        </li>
+                      )}
+                    </ul>
+                  </div>
                 </div>
               )}
 

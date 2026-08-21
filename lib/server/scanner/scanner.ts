@@ -43,7 +43,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 // as soon as a sample gets a reliable answer again.
 const BASE_DELAY_MS = 800;
 const COOLDOWN_START_MS = 10_000;
-const COOLDOWN_MAX_MS = 60_000;
+// Capped at 30s: with in-sample retries a blocked stretch already costs
+// ~1 min per sample; a 60s cap made long scans look frozen near the end.
+const COOLDOWN_MAX_MS = 30_000;
 
 /**
  * The single Scanner used by every source type (URL / file / folder).

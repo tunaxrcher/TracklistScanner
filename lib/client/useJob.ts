@@ -19,6 +19,17 @@ export function useJob() {
 
   useEffect(() => disconnect, [disconnect]);
 
+  // The server no longer knows this job (e.g. dev-server restart): mark it
+  // stopped locally so the UI unblocks and partial results stay usable.
+  const markLost = useCallback(() => {
+    disconnect();
+    setJob((prev) =>
+      prev && !["completed", "failed", "cancelled"].includes(prev.status)
+        ? { ...prev, status: "cancelled" }
+        : prev,
+    );
+  }, [disconnect]);
+
   const subscribe = useCallback(
     (jobId: string) => {
       disconnect();
@@ -36,14 +47,22 @@ export function useJob() {
         }
       };
       source.onerror = () => {
-        // If the stream drops, fall back to one status fetch.
+        // If the stream drops, fall back to one status fetch. A 404 means the
+        // job is gone for good; transient network errors are left to the
+        // EventSource auto-reconnect.
         fetch(`/api/jobs/${jobId}`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data: Job | null) => data && setJob(data))
+          .then((r) => {
+            if (r.status === 404) {
+              markLost();
+              return null;
+            }
+            return r.ok ? (r.json() as Promise<Job>) : null;
+          })
+          .then((data) => data && setJob(data))
           .catch(() => {});
       };
     },
-    [disconnect],
+    [disconnect, markLost],
   );
 
   /** Start a job via a request that returns { jobId } and begin streaming. */
@@ -74,11 +93,12 @@ export function useJob() {
   const cancel = useCallback(async () => {
     if (!job) return;
     try {
-      await fetch(`/api/jobs/${job.id}/cancel`, { method: "POST" });
+      const res = await fetch(`/api/jobs/${job.id}/cancel`, { method: "POST" });
+      if (res.status === 404) markLost();
     } catch {
       // job state will update via SSE anyway
     }
-  }, [job]);
+  }, [job, markLost]);
 
   const reset = useCallback(() => {
     disconnect();

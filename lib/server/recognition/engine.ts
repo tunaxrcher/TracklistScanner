@@ -47,8 +47,14 @@ export async function recognizeSample(
   let shazamAnswered = false;
   let rateLimited = false;
 
+  // With ACR available as a fallback, don't burn long waits on repeated
+  // Shazam retries — a missed marginal song gets revisited by the scanner's
+  // gap-fill pass anyway.
+  const hasFallback = settings.useAcrCloud && isAcrConfigured();
+  const maxRetries = hasFallback ? 1 : SHAZAM_RETRIES;
+
   if (settings.useShazam) {
-    for (let attempt = 0; attempt <= SHAZAM_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       try {
         const result = await recognizeWithShazam(wavPath);
@@ -59,7 +65,7 @@ export async function recognizeSample(
       } catch (err) {
         if (err instanceof AppError && err.code === "SHAZAM_RATE_LIMIT") {
           rateLimited = true;
-          if (attempt < SHAZAM_RETRIES) {
+          if (attempt < maxRetries) {
             console.warn(`[shazam] rate limited, retrying in ${RETRY_DELAYS_MS[attempt]}ms`);
             await sleep(RETRY_DELAYS_MS[attempt], signal);
             continue;

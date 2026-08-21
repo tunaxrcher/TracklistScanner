@@ -87,7 +87,11 @@ export default function Home() {
       )}
 
       <main>
-        <TracklistPanel settings={settings} djPoolConfigured={health?.djPool ?? null} />
+        <TracklistPanel
+          settings={settings}
+          djPoolConfigured={health?.djPool ?? null}
+          acrConfigured={health?.acrCloud ?? null}
+        />
       </main>
 
       <footer className="mt-10 text-center text-xs text-muted/60">
