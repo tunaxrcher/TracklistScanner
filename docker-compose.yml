@@ -1,0 +1,25 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: music-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: change-me-root
+      MYSQL_DATABASE: musicapp
+      MYSQL_USER: musicapp
+      MYSQL_PASSWORD: change-me
+    # Bound to localhost only — the app connects locally, nothing exposed publicly.
+    # If 3306 is taken on your machine, change the left side (e.g. "127.0.0.1:3307:3306")
+    # and update the port in DATABASE_URL accordingly.
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pchange-me-root"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mysql-data:

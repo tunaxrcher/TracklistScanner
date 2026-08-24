@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+/// Everyone who has signed in with Google (upserted on each login).
+model User {
+  email       String    @id @db.VarChar(255)
+  name        String?   @db.VarChar(255)
+  picture     String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  lastLoginAt DateTime? @map("last_login_at")
+
+  recents Recent[]
+
+  @@map("users")
+}
+
+/// Recent scans per account, including the saved tracklist (synced across devices).
+model Recent {
+  id        BigInt  @id @default(autoincrement())
+  userEmail String  @map("user_email") @db.VarChar(255)
+  /// URL for url scans, or a `file:` pseudo-key for local file/folder scans.
+  /// Capped at 500 chars so the compound unique key fits InnoDB's 3072-byte limit.
+  url       String  @db.VarChar(500)
+  kind      String  @default("url") @db.VarChar(16)
+  title     String? @db.VarChar(512)
+  /// TrackEntry[] from lib/types.ts
+  tracks    Json?
+  /// Milliseconds since epoch (matches the client's `at` field).
+  updatedAt BigInt  @map("updated_at")
+
+  user User @relation(fields: [userEmail], references: [email], onDelete: Cascade)
+
+  @@unique([userEmail, url], map: "uq_user_url")
+  @@index([userEmail, updatedAt], map: "idx_user_time")
+  @@map("recents")
+}

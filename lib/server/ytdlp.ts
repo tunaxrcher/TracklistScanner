@@ -16,11 +16,13 @@ export interface YtDlpContext {
  * cookies.txt — needed on datacenter IPs where YouTube demands a signed-in
  * session ("Sign in to confirm you're not a bot").
  */
-function commonArgs(): string[] {
+export function ytdlpCommonArgs(): string[] {
   const cookies = process.env.YTDLP_COOKIES;
   if (cookies && existsSync(cookies)) return ["--cookies", cookies];
   return [];
 }
+
+const commonArgs = ytdlpCommonArgs;
 
 export interface DownloadProgressEvent {
   percent?: number;
@@ -57,6 +59,58 @@ export async function fetchMediaInfo(url: string, ctx: YtDlpContext = {}): Promi
     };
   } catch {
     throw new AppError("UNKNOWN", "Could not read media information from this URL.");
+  }
+}
+
+export interface YoutubeSearchResult {
+  id: string;
+  url: string;
+  title: string;
+  channel?: string;
+  /** Seconds */
+  duration?: number;
+  thumbnail?: string;
+}
+
+/** Search YouTube (no download) via yt-dlp's ytsearch pseudo-URL. */
+export async function searchYoutube(
+  query: string,
+  limit = 5,
+  ctx: YtDlpContext = {},
+): Promise<YoutubeSearchResult[]> {
+  const ytdlp = resolveYtDlp();
+  const { code, stdout, stderr } = await run(
+    ytdlp,
+    ["--no-warnings", ...commonArgs(), "--flat-playlist", "-J", `ytsearch${limit}:${query}`],
+    { signal: ctx.signal, onSpawn: ctx.onSpawn },
+  );
+  if (code !== 0) {
+    console.warn("[yt-dlp search]", stderr.slice(0, 800));
+    throw classifyYtDlpError(stderr);
+  }
+  try {
+    const data = JSON.parse(stdout) as {
+      entries?: {
+        id?: string;
+        title?: string;
+        channel?: string;
+        uploader?: string;
+        duration?: number;
+        thumbnails?: { url?: string }[];
+      }[];
+    };
+    return (data.entries ?? [])
+      .filter((e): e is typeof e & { id: string } => Boolean(e.id))
+      .map((e) => ({
+        id: e.id,
+        url: `https://www.youtube.com/watch?v=${e.id}`,
+        title: e.title ?? "Untitled",
+        channel: e.channel ?? e.uploader,
+        duration: e.duration,
+        thumbnail: e.thumbnails?.[e.thumbnails.length - 1]?.url,
+      }));
+  } catch {
+    throw new AppError("UNKNOWN", "Could not read YouTube search results.");
   }
 }
 

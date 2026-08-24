@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { TrackEntry } from "@/lib/types";
 
 export interface RecentItem {
@@ -14,13 +14,27 @@ export interface RecentItem {
   kind?: "url" | "file" | "folder";
 }
 
+/**
+ * Recent history store. Primary backend is the server (per Google account,
+ * synced across devices); when the server has no database configured it
+ * falls back to browser localStorage — same behavior as before.
+ */
+
 const STORAGE_KEY = "audio-tool-recent-v1";
 const CHANGE_EVENT = "app-recent-changed";
 const MAX_ITEMS = 20;
 
-let cache: RecentItem[] | null = null;
+let cache: RecentItem[] = [];
+let mode: "unknown" | "db" | "local" = "unknown";
+let refreshStarted = false;
 
-function load(): RecentItem[] {
+function notify(): void {
+  window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
+}
+
+// ---------- localStorage fallback ----------
+
+function loadLocal(): RecentItem[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
@@ -31,15 +45,76 @@ function load(): RecentItem[] {
   }
 }
 
-function persist(items: RecentItem[]): void {
-  cache = items;
+function persistLocal(items: RecentItem[]): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   } catch {
     /* ignore quota errors */
   }
-  window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
 }
+
+function clearLocal(): void {
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------- server sync ----------
+
+/** Initial load: server first, localStorage on 503/network failure. */
+async function refresh(): Promise<void> {
+  try {
+    const res = await fetch("/api/recents");
+    if (!res.ok) throw new Error(String(res.status));
+    const data = (await res.json()) as { items: RecentItem[] };
+    mode = "db";
+    // One-time migration: push pre-DB localStorage history up to the account.
+    const local = loadLocal();
+    if (data.items.length === 0 && local.length > 0) {
+      const imported = await fetch("/api/recents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: local }),
+      })
+        .then((r) => (r.ok ? (r.json() as Promise<{ items: RecentItem[] }>) : null))
+        .catch(() => null);
+      cache = imported?.items ?? local;
+      // Once imported, drop the device copy — otherwise it would be re-imported
+      // into every other account that signs in on this device with an empty
+      // history (and resurrect items the user already cleared).
+      if (imported) clearLocal();
+    } else {
+      cache = data.items;
+      // The account history is the source of truth now; a stale device copy
+      // would only leak into the next account. Clear it.
+      if (local.length > 0) clearLocal();
+    }
+  } catch {
+    mode = "local";
+    cache = loadLocal();
+  }
+  notify();
+}
+
+/** Fire-and-forget server write; drops to localStorage if the DB is gone. */
+function sync(request: () => Promise<Response>): void {
+  if (mode === "local") {
+    persistLocal(cache);
+    return;
+  }
+  void request()
+    .then((res) => {
+      if (res.status === 503) throw new Error("no-db");
+    })
+    .catch(() => {
+      mode = "local";
+      persistLocal(cache);
+    });
+}
+
+// ---------- public API (same shape as the old localStorage store) ----------
 
 /** Upsert by url/key: refresh timestamp, fill title/tracks, move to the front. */
 export function addRecent(
@@ -50,9 +125,7 @@ export function addRecent(
 ): void {
   const trimmed = url.trim();
   if (!trimmed) return;
-  const items = cache ?? load();
-  const existing = items.find((i) => i.url === trimmed);
-  const rest = items.filter((i) => i.url !== trimmed);
+  const existing = cache.find((i) => i.url === trimmed);
   const next: RecentItem = {
     url: trimmed,
     title: title ?? existing?.title,
@@ -60,17 +133,32 @@ export function addRecent(
     kind,
     at: Date.now(),
   };
-  persist([next, ...rest].slice(0, MAX_ITEMS));
+  cache = [next, ...cache.filter((i) => i.url !== trimmed)].slice(0, MAX_ITEMS);
+  notify();
+  sync(() =>
+    fetch("/api/recents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Send only what this update knows; the server keeps existing
+      // title/tracks when they are omitted.
+      body: JSON.stringify({ url: trimmed, title, tracks, kind, at: next.at }),
+    }),
+  );
 }
 
 export function removeRecent(url: string): void {
-  const items = cache ?? load();
-  persist(items.filter((i) => i.url !== url));
+  cache = cache.filter((i) => i.url !== url);
+  notify();
+  sync(() => fetch(`/api/recents?url=${encodeURIComponent(url)}`, { method: "DELETE" }));
 }
 
 export function clearRecent(): void {
-  persist([]);
+  cache = [];
+  notify();
+  sync(() => fetch("/api/recents?all=1", { method: "DELETE" }));
 }
+
+// ---------- React binding ----------
 
 function subscribe(callback: () => void): () => void {
   window.addEventListener(CHANGE_EVENT, callback);
@@ -78,7 +166,7 @@ function subscribe(callback: () => void): () => void {
 }
 
 function getSnapshot(): RecentItem[] {
-  return (cache ??= load());
+  return cache;
 }
 
 const EMPTY: RecentItem[] = [];
@@ -87,5 +175,11 @@ function getServerSnapshot(): RecentItem[] {
 }
 
 export function useRecent(): RecentItem[] {
+  // Kick off the initial server fetch once, from an effect (not render).
+  useEffect(() => {
+    if (refreshStarted) return;
+    refreshStarted = true;
+    void refresh();
+  }, []);
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

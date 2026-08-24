@@ -1,6 +1,6 @@
 // ---------- Shared types (used by both server and client) ----------
 
-export type JobType = "scan" | "djpool";
+export type JobType = "scan" | "djpool" | "djdl";
 
 export type JobStatus =
   | "queued"
@@ -142,12 +142,39 @@ export type DjPoolTrackStatus =
   | "failed"
   | "skipped";
 
+/** Where to look for detected tracks, and in which order. */
+export interface SourcePrefs {
+  djpool: boolean;
+  youtube: boolean;
+  /** Which source to try first when both are enabled. */
+  priority: "djpool" | "youtube";
+}
+
+export const DEFAULT_SOURCE_PREFS: SourcePrefs = {
+  djpool: true,
+  youtube: true,
+  priority: "djpool",
+};
+
+/** A specific version chosen in the picker, used as-is by Download All. */
+export interface TrackPin {
+  source: "djpool" | "youtube";
+  /** DJ Pool download URL, or YouTube video URL. */
+  url: string;
+  /** File name to save as (DJ Pool candidates carry their own name). */
+  name?: string;
+}
+
 export interface DjPoolTrack {
   id: string;
   /** Search query sent to the pool. */
   query: string;
   title: string;
   artist: string;
+  /** 1-based position in the tracklist (used for the numbered file prefix). */
+  num?: number;
+  /** Which source the file actually came from. */
+  source?: "djpool" | "youtube";
   status: DjPoolTrackStatus;
   /** Download progress 0-100 while status is "downloading". */
   progress?: number;
@@ -158,6 +185,17 @@ export interface DjPoolTrack {
   fileName?: string;
   fileSize?: number;
   error?: string;
+}
+
+/** A YouTube search result offered as a downloadable version. */
+export interface YoutubeVersion {
+  id: string;
+  url: string;
+  title: string;
+  channel?: string;
+  /** Seconds */
+  duration?: number;
+  thumbnail?: string;
 }
 
 export interface DjPoolState {
@@ -172,6 +210,25 @@ export interface DjPoolState {
   bundleSize?: number;
 }
 
+// ---------- Download For DJ (YouTube → DJ-ready file) ----------
+
+/**
+ * Output format for DJ downloads. Source audio from YouTube is lossy
+ * (~130-160 kbps Opus); WAV re-encodes nothing further and plays on any
+ * CDJ, MP3 320 trades a hair of quality for small files with tags.
+ */
+export type DjDownloadFormat = "wav" | "mp3";
+
+export interface DjDlState {
+  url: string;
+  format: DjDownloadFormat;
+  info?: MediaInfo;
+  /** 0-100 for the fetch phase. */
+  downloadProgress: number;
+  fileName?: string;
+  fileSize?: number;
+}
+
 export interface Job {
   id: string;
   type: JobType;
@@ -180,4 +237,5 @@ export interface Job {
   error?: string;
   scan?: ScanState;
   djpool?: DjPoolState;
+  djdl?: DjDlState;
 }

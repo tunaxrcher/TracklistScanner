@@ -11,13 +11,22 @@ import {
   ListMusic,
   RotateCcw,
   ScanLine,
+  Settings2,
   Sparkles,
   Square,
   TriangleAlert,
 } from "lucide-react";
 import { useJob } from "@/lib/client/useJob";
 import type { AppSettings } from "@/lib/client/settings";
-import type { DjPoolCandidate, ScanMode, ScanSettings, TrackEntry } from "@/lib/types";
+import type {
+  DjPoolCandidate,
+  ScanMode,
+  ScanSettings,
+  SourcePrefs,
+  TrackEntry,
+  YoutubeVersion,
+} from "@/lib/types";
+import type { PinnedVersion } from "@/components/TracklistGrid";
 import { cleanTracklist, formatTimestamp, mergeTracklists } from "@/lib/tracklist";
 import {
   filenameFromResponse,
@@ -27,12 +36,14 @@ import {
   type DjRowState,
 } from "@/lib/client/djpool";
 import { addRecent, type RecentItem } from "@/lib/client/recent";
+import { loadSourcePrefs, saveSourcePrefs } from "@/lib/client/sources";
 import { youtubeEmbed } from "@/lib/client/youtube";
 import { ProgressBar, Stat, StatusBadge, formatBytes } from "@/components/ui";
 import { TracklistGrid, type DjPoolColumn } from "@/components/TracklistGrid";
 import { RecentRow } from "@/components/RecentRow";
 import { PlayerBar, type NowPlaying } from "@/components/PlayerBar";
 import { ExportDialog } from "@/components/ExportDialog";
+import { SourceDialog } from "@/components/SourceDialog";
 
 const AUDIO_EXTENSIONS = [".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".webm"];
 const ACCEPT = AUDIO_EXTENSIONS.join(",");
@@ -101,11 +112,23 @@ export function TracklistPanel({
     loading: boolean;
     candidates: DjPoolCandidate[];
     error?: string;
-  }>({ trackId: null, loading: false, candidates: [] });
+    youtube: { loading: boolean; results: YoutubeVersion[]; error?: string };
+  }>({ trackId: null, loading: false, candidates: [], youtube: { loading: false, results: [] } });
+
+  // Where tracks are searched/downloaded from (DJ Pool / YouTube / both).
+  const initialSources = useMemo(loadSourcePrefs, []);
+  const [sourcePrefs, setSourcePrefs] = useState<SourcePrefs>(initialSources.prefs);
+  // "Chosen" for this session — remembered choices skip the dialog entirely.
+  const [sourcesChosen, setSourcesChosen] = useState(initialSources.remembered);
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   // Ordered track ids sent to the current bundle job, for index → id mapping.
   const djJobTrackIds = useRef<string[]>([]);
   // Candidates discovered during the availability probe, reused by Get/picker/play.
   const [djCandidates, setDjCandidates] = useState<Record<string, DjPoolCandidate[]>>({});
+  // Tracks unchecked by the user — excluded from Download All (absent = included).
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // Specific versions pinned from the picker, used by Get and Download All.
+  const [pins, setPins] = useState<Record<string, PinnedVersion>>({});
   // Which scan job id has already been probed against DJ Pool.
   const probedJobId = useRef<string | null>(null);
   // Bottom player (DJ Pool preview).
@@ -204,20 +227,110 @@ export function TracklistPanel({
     [djCandidates],
   );
 
+  /** Preview a YouTube result from the picker (streams audio, nothing saved). */
+  const playYoutube = useCallback((track: TrackEntry, video: YoutubeVersion) => {
+    const src = `/api/youtube/stream?u=${encodeURIComponent(video.url)}`;
+    setNowPlaying((cur) =>
+      cur?.src === src
+        ? null
+        : {
+            trackId: track.id,
+            name: video.title,
+            subtitle: `YouTube preview · ${video.channel ?? ""}`,
+            cover: video.thumbnail ?? track.coverUrl,
+            src,
+          },
+    );
+  }, []);
+
+  /** "01 - " style prefix from the track's position in the displayed list. */
+  const trackNumPrefix = useCallback(
+    (track: TrackEntry) => {
+      const i = displayTracks.findIndex((t) => t.id === track.id);
+      return i >= 0 ? `${String(i + 1).padStart(2, "0")} - ` : "";
+    },
+    [displayTracks],
+  );
+
+  const closePicker = useCallback(
+    () =>
+      setPicker({
+        trackId: null,
+        loading: false,
+        candidates: [],
+        youtube: { loading: false, results: [] },
+      }),
+    [],
+  );
+
+  /**
+   * Download a track from YouTube (specific video from the picker, a pinned
+   * video, or the top search result). The server converts it to MP3 320.
+   */
+  const downloadYoutube = useCallback(
+    async (track: TrackEntry, video?: { url: string }) => {
+      closePicker();
+      const pin = pins[track.id];
+      const target = video ?? (pin?.source === "youtube" ? { url: pin.url } : undefined);
+      setDjRows((r) => ({ ...r, [track.id]: { status: "searching" } }));
+      try {
+        const baseName = `${trackNumPrefix(track)}${track.artist ? `${track.artist} - ` : ""}${track.title}`;
+        const res = await fetch("/api/youtube/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            target
+              ? { url: target.url, format: "mp3", baseName }
+              : { title: track.title, artist: track.artist, format: "mp3", baseName },
+          ),
+        });
+        if (res.status === 404) {
+          setDjRows((r) => ({ ...r, [track.id]: { status: "notfound" } }));
+          return;
+        }
+        if (!res.ok) {
+          const e = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(e.error ?? "Download failed.");
+        }
+        setDjRows((r) => ({ ...r, [track.id]: { status: "downloading" } }));
+        const blob = await readBlobWithProgress(res, (progress) =>
+          setDjRows((r) => ({ ...r, [track.id]: { status: "downloading", progress } })),
+        );
+        const name = filenameFromResponse(res, `${baseName}.mp3`);
+        saveBlob(blob, name);
+        setDjRows((r) => ({ ...r, [track.id]: { status: "done", fileName: name } }));
+      } catch (err) {
+        setDjRows((r) => ({ ...r, [track.id]: { status: "failed", error: (err as Error).message } }));
+      }
+    },
+    [closePicker, trackNumPrefix, pins],
+  );
+
   const downloadBest = useCallback(
     async (track: TrackEntry) => {
-      // Reuse a candidate already found by the probe to skip a second search.
+      const pin = pins[track.id];
+      // A pinned YouTube video takes the YouTube path entirely.
+      if (pin?.source === "youtube") return downloadYoutube(track);
+
+      // Pinned pool version, or a candidate already found by the probe,
+      // skips the second search.
       const cachedBest = djCandidates[track.id]?.[0];
-      setDjRows((r) => ({ ...r, [track.id]: { status: cachedBest ? "downloading" : "searching" } }));
+      const direct = pin?.source === "djpool" ? { downloadUrl: pin.url, name: pin.name } : null;
+      setDjRows((r) => ({
+        ...r,
+        [track.id]: { status: direct || cachedBest ? "downloading" : "searching" },
+      }));
       try {
-        const payload = cachedBest
-          ? {
-              downloadUrl: cachedBest.download,
-              name: cachedBest.name.endsWith(`.${cachedBest.ext}`)
-                ? cachedBest.name
-                : `${cachedBest.name}.${cachedBest.ext}`,
-            }
-          : { title: track.title, artist: track.artist, preferences: settings.djpool };
+        const payload =
+          direct ??
+          (cachedBest
+            ? {
+                downloadUrl: cachedBest.download,
+                name: cachedBest.name.endsWith(`.${cachedBest.ext}`)
+                  ? cachedBest.name
+                  : `${cachedBest.name}.${cachedBest.ext}`,
+              }
+            : { title: track.title, artist: track.artist, preferences: settings.djpool });
         const res = await fetch("/api/djpool/download", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -235,42 +348,75 @@ export function TracklistPanel({
         const blob = await readBlobWithProgress(res, (progress) =>
           setDjRows((r) => ({ ...r, [track.id]: { status: "downloading", progress } })),
         );
-        const name = filenameFromResponse(res, `${track.artist} - ${track.title}.mp3`);
+        const name =
+          trackNumPrefix(track) + filenameFromResponse(res, `${track.artist} - ${track.title}.mp3`);
         saveBlob(blob, name);
         setDjRows((r) => ({ ...r, [track.id]: { status: "done", fileName: name } }));
       } catch (err) {
         setDjRows((r) => ({ ...r, [track.id]: { status: "failed", error: (err as Error).message } }));
       }
     },
-    [settings.djpool, djCandidates],
+    [settings.djpool, djCandidates, trackNumPrefix, pins, downloadYoutube],
   );
 
   const openPicker = useCallback(
     async (track: TrackEntry) => {
-      // Show already-known candidates instantly when the probe found them.
+      const poolEnabled = sourcePrefs.djpool && djPoolConfigured !== false;
+      const ytEnabled = sourcePrefs.youtube;
       const cached = djCandidates[track.id];
-      if (cached && cached.length > 0) {
-        setPicker({ trackId: track.id, loading: false, candidates: cached });
-        return;
+      const needPoolFetch = poolEnabled && (!cached || cached.length === 0);
+
+      setPicker({
+        trackId: track.id,
+        loading: needPoolFetch,
+        candidates: cached ?? [],
+        youtube: { loading: ytEnabled, results: [] },
+      });
+
+      if (needPoolFetch) {
+        try {
+          const res = await fetch("/api/djpool/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: track.title, artist: track.artist, preferences: settings.djpool }),
+          });
+          const data = (await res.json()) as { candidates?: DjPoolCandidate[]; error?: string };
+          if (!res.ok) throw new Error(data.error ?? "Search failed.");
+          setPicker((p) =>
+            p.trackId === track.id ? { ...p, loading: false, candidates: data.candidates ?? [] } : p,
+          );
+        } catch (err) {
+          setPicker((p) =>
+            p.trackId === track.id ? { ...p, loading: false, error: (err as Error).message } : p,
+          );
+        }
       }
-      setPicker({ trackId: track.id, loading: true, candidates: [] });
-      try {
-        const res = await fetch("/api/djpool/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: track.title, artist: track.artist, preferences: settings.djpool }),
-        });
-        const data = (await res.json()) as { candidates?: DjPoolCandidate[]; error?: string };
-        if (!res.ok) throw new Error(data.error ?? "Search failed.");
-        setPicker({ trackId: track.id, loading: false, candidates: data.candidates ?? [] });
-      } catch (err) {
-        setPicker({ trackId: track.id, loading: false, candidates: [], error: (err as Error).message });
+
+      if (ytEnabled) {
+        try {
+          const res = await fetch("/api/youtube/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: track.title, artist: track.artist }),
+          });
+          const data = (await res.json()) as { results?: YoutubeVersion[]; error?: string };
+          if (!res.ok) throw new Error(data.error ?? "Search failed.");
+          setPicker((p) =>
+            p.trackId === track.id
+              ? { ...p, youtube: { loading: false, results: data.results ?? [] } }
+              : p,
+          );
+        } catch (err) {
+          setPicker((p) =>
+            p.trackId === track.id
+              ? { ...p, youtube: { loading: false, results: [], error: (err as Error).message } }
+              : p,
+          );
+        }
       }
     },
-    [settings.djpool, djCandidates],
+    [settings.djpool, djCandidates, sourcePrefs, djPoolConfigured],
   );
-
-  const closePicker = useCallback(() => setPicker({ trackId: null, loading: false, candidates: [] }), []);
 
   const pickVersion = useCallback(
     async (track: TrackEntry, candidate: DjPoolCandidate) => {
@@ -292,29 +438,40 @@ export function TracklistPanel({
         const blob = await readBlobWithProgress(res, (progress) =>
           setDjRows((r) => ({ ...r, [track.id]: { status: "downloading", progress } })),
         );
-        const name = filenameFromResponse(res, fallback);
+        const name = trackNumPrefix(track) + filenameFromResponse(res, fallback);
         saveBlob(blob, name);
         setDjRows((r) => ({ ...r, [track.id]: { status: "done", fileName: name } }));
       } catch (err) {
         setDjRows((r) => ({ ...r, [track.id]: { status: "failed", error: (err as Error).message } }));
       }
     },
-    [closePicker],
+    [closePicker, trackNumPrefix],
   );
 
-  // Tracks the bundle download will actually attempt: everything except rows
-  // the probe (or an earlier attempt) already marked "Not found".
+  // Tracks the bundle download will actually attempt, with their 1-based
+  // tracklist positions (for the "01 - " filename prefix). Unchecked rows are
+  // skipped; pinned rows are always obtainable; with YouTube enabled every
+  // track is obtainable; otherwise pool "Not found" rows are excluded.
   const downloadableTracks = useMemo(
-    () => displayTracks.filter((t) => djRows[t.id]?.status !== "notfound"),
-    [displayTracks, djRows],
+    () =>
+      displayTracks
+        .map((track, i) => ({ track, num: i + 1 }))
+        .filter(({ track }) => selected[track.id] !== false)
+        .filter(
+          ({ track }) =>
+            pins[track.id] != null ||
+            sourcePrefs.youtube ||
+            djRows[track.id]?.status !== "notfound",
+        ),
+    [displayTracks, djRows, sourcePrefs.youtube, selected, pins],
   );
 
   const downloadAll = useCallback(() => {
     const list = downloadableTracks;
-    djJobTrackIds.current = list.map((t) => t.id);
+    djJobTrackIds.current = list.map(({ track }) => track.id);
     setDjRows((prev) => {
       const next = { ...prev };
-      for (const t of list) next[t.id] = { status: "searching" };
+      for (const { track } of list) next[track.id] = { status: "searching" };
       return next;
     });
     void djJob.start(() =>
@@ -322,19 +479,30 @@ export function TracklistPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tracks: list.map((t) => ({ title: t.title, artist: t.artist })),
+          tracks: list.map(({ track, num }) => {
+            const pin = pins[track.id];
+            return {
+              title: track.title,
+              artist: track.artist,
+              num,
+              pin: pin ? { source: pin.source, url: pin.url, name: pin.name } : undefined,
+            };
+          }),
           preferences: settings.djpool,
+          sources: sourcePrefs,
         }),
       }),
     );
-  }, [downloadableTracks, djJob, settings.djpool]);
+  }, [downloadableTracks, djJob, settings.djpool, sourcePrefs, pins]);
 
   // Auto-probe DJ Pool availability once results are ready (scan completed or
   // stopped, or a Recent tracklist restored), so each row shows "Not found" or
   // a ready Get button without clicking first.
   const probeKey = done && job ? job.id : !job && restored ? `recent:${restored.url}` : null;
   useEffect(() => {
-    if (!probeKey || djPoolConfigured === false) return;
+    // Probing only makes sense once the user has picked sources, and only
+    // when DJ Pool is one of them (YouTube has everything, nothing to probe).
+    if (!probeKey || !sourcesChosen || !sourcePrefs.djpool || djPoolConfigured === false) return;
     const tracks = sourceTracks;
     if (tracks.length === 0) return;
     if (probedJobId.current === probeKey) return;
@@ -412,26 +580,71 @@ export function TracklistPanel({
     return () => {
       cancelled = true;
     };
-  }, [probeKey, sourceTracks, djPoolConfigured, settings.djpool]);
+  }, [probeKey, sourceTracks, djPoolConfigured, settings.djpool, sourcesChosen, sourcePrefs.djpool]);
+
+  /** Confirm handler for the source chooser dialog. */
+  const onSourcesConfirm = (prefs: SourcePrefs, remember: boolean) => {
+    setSourcePrefs(prefs);
+    setSourcesChosen(true);
+    setSourceDialogOpen(false);
+    saveSourcePrefs(prefs, remember);
+    // Reset probe results so they reflect the new source selection; rows the
+    // user already downloaded are preserved by the probe's own guards.
+    setDjRows((prev) => {
+      const next: typeof prev = {};
+      for (const [id, row] of Object.entries(prev)) {
+        next[id] = row.status === "done" || row.status === "downloading" ? row : { status: "idle" };
+      }
+      return next;
+    });
+    probedJobId.current = null;
+  };
 
   const djColumn: DjPoolColumn = {
     configured: djPoolConfigured,
+    sources: sourcePrefs,
     rows: djRows,
+    selected,
+    onToggleSelect: (track) =>
+      setSelected((s) => ({ ...s, [track.id]: s[track.id] === false })),
+    pins,
+    onPin: (track, pin) =>
+      setPins((p) => {
+        const next = { ...p };
+        if (pin) next[track.id] = pin;
+        else delete next[track.id];
+        return next;
+      }),
     picker,
     onDownload: downloadBest,
+    onYoutubeGet: (track) => void downloadYoutube(track),
     onOpenPicker: openPicker,
     onClosePicker: closePicker,
     onPick: pickVersion,
+    onPickYoutube: (track, video) => void downloadYoutube(track, video),
     canPlay,
     onPlay: playBest,
     onPlayCandidate: playCandidate,
+    onPlayYoutube: playYoutube,
   };
+
+  const anySourceUsable = (sourcePrefs.djpool && djPoolConfigured !== false) || sourcePrefs.youtube;
+  const sourcesLabel =
+    sourcePrefs.djpool && sourcePrefs.youtube
+      ? sourcePrefs.priority === "djpool"
+        ? "DJ Pool → YouTube"
+        : "YouTube → DJ Pool"
+      : sourcePrefs.djpool
+        ? "DJ Pool"
+        : "YouTube";
 
   /** Clear every result-related state (DJ Pool rows, bundle job, player, …). */
   const clearResults = () => {
     djJob.reset();
     setDjRows({});
     setDjCandidates({});
+    setSelected({});
+    setPins({});
     closePicker();
     setNowPlaying(null);
     setRestored(null);
@@ -897,20 +1110,30 @@ export function TracklistPanel({
             </div>
             {resultsReady && hasTracks && (
               <div className="flex flex-wrap items-center gap-2">
-                {/* DJ Pool bundle controls */}
+                {/* Source selection chip */}
+                <button
+                  type="button"
+                  onClick={() => setSourceDialogOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-text"
+                  title="Change where tracks are searched and downloaded from"
+                >
+                  <Settings2 size={13} /> {sourcesLabel}
+                </button>
+
+                {/* Bundle controls */}
                 {!djJob.job && (
                   <button
                     type="button"
                     onClick={downloadAll}
-                    disabled={djPoolConfigured === false || downloadableTracks.length === 0}
+                    disabled={!anySourceUsable || downloadableTracks.length === 0}
                     title={
-                      djPoolConfigured === false
-                        ? "DJ Pool account not configured"
+                      !anySourceUsable
+                        ? "No usable download source — check Sources"
                         : downloadableTracks.length === 0
-                          ? "No tracks available on DJ Pool"
-                          : downloadableTracks.length < displayTracks.length
-                            ? `${displayTracks.length - downloadableTracks.length} not found on DJ Pool — excluded`
-                            : undefined
+                          ? "No tracks available on the selected sources"
+                        : downloadableTracks.length < displayTracks.length
+                          ? `${displayTracks.length - downloadableTracks.length} excluded (unchecked, or not available on the selected sources)`
+                          : undefined
                     }
                     className="flex items-center gap-1.5 rounded-lg bg-accent-gradient px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -993,7 +1216,7 @@ export function TracklistPanel({
               {djJob.error}
             </div>
           )}
-          {djPoolConfigured === false && resultsReady && hasTracks && (
+          {djPoolConfigured === false && sourcePrefs.djpool && resultsReady && hasTracks && (
             <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
               <TriangleAlert size={15} className="mt-0.5 shrink-0" />
               <span>
@@ -1019,6 +1242,16 @@ export function TracklistPanel({
         <PlayerBar key={nowPlaying.src} track={nowPlaying} onClose={() => setNowPlaying(null)} />
       )}
       {showExport && <ExportDialog tracks={displayTracks} onClose={() => setShowExport(false)} />}
+
+      {/* Source chooser: opens automatically the first time results appear,
+          afterwards via the Sources chip. */}
+      {resultsReady && hasTracks && (sourceDialogOpen || !sourcesChosen) && (
+        <SourceDialog
+          initial={sourcePrefs}
+          djPoolConfigured={djPoolConfigured}
+          onConfirm={onSourcesConfirm}
+        />
+      )}
     </div>
   );
 }

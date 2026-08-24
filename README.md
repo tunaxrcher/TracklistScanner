@@ -1,6 +1,6 @@
 # Tracklist Scanner
 
-Find out **which songs are inside** a URL, a local audio file, or a whole folder — *without* downloading an MP3 first. Recognition uses **Shazam (primary)** with **ACRCloud (fallback)**. Once a tracklist is found, each song can be pulled straight from **DJ Pool Records**.
+Find out **which songs are inside** a URL, a local audio file, or a whole folder — *without* downloading an MP3 first. Recognition uses **Shazam (primary)** with **ACRCloud (fallback)**. Once a tracklist is found, each song can be pulled straight from **DJ Pool Records** or **YouTube** (converted to MP3 320). A second tab, **Download for DJ**, turns any YouTube URL into a DJ-ready WAV or MP3 320 file.
 
 ## Requirements
 
@@ -34,6 +34,50 @@ DJPOOL_PASSWORD=your-password
 ```
 
 Without these the feature is disabled (the button shows a "not configured" notice).
+
+## Google sign-in (login gate)
+
+The app requires a Google login once these are set in `.env.local`:
+
+```env
+GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=...
+AUTH_SECRET=any-long-random-string
+ALLOWED_EMAILS=you@gmail.com,friend@gmail.com   # empty = any Google account
+APP_URL=https://your-domain.example             # needed behind a reverse proxy
+```
+
+Create the OAuth client at [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) (type **Web application**) and add `{APP_URL}/api/auth/callback` as an authorized redirect URI. **While `GOOGLE_CLIENT_ID`/`SECRET` are unset the gate is open** (otherwise nobody could ever sign in), so set them before exposing the app.
+
+The login page has a bottom player bar: drop an MP3 at `public/lobby.mp3` to give it music.
+
+## Database (MySQL + Prisma)
+
+Recent scans (including their saved tracklists) are stored **per Google account** in MySQL through [Prisma](https://www.prisma.io/) (schema in `prisma/schema.prisma`), so history follows the user across devices. Start the bundled container, point the app at it, and apply migrations:
+
+```bash
+docker compose up -d          # starts MySQL 8.4 (edit passwords in docker-compose.yml first)
+npx prisma migrate deploy     # applies prisma/migrations to the database
+```
+
+```env
+# in .env — the Prisma CLI reads .env, not .env.local (Next.js reads both)
+DATABASE_URL=mysql://musicapp:change-me@127.0.0.1:3306/musicapp
+```
+
+Without `DATABASE_URL` the app still works — history just falls back to browser localStorage (per device, not per account), and any existing localStorage history is imported into the account automatically the first time the DB comes online. Device-level preferences (scan settings, source choice) intentionally stay in localStorage.
+
+Day-to-day Prisma workflow:
+
+```bash
+npm run db:migrate     # after editing prisma/schema.prisma: creates + applies a migration (dev)
+                       # needs shadow-DB rights once per container:
+                       #   docker exec music-mysql mysql -uroot -p<root-pw> -e "GRANT ALL PRIVILEGES ON *.* TO 'musicapp'@'%';"
+npm run db:deploy      # on the server: applies pending migrations (used on deploy)
+# `npm install` regenerates the Prisma client automatically (postinstall).
+```
+
+When deploying to the droplet: `git pull && npm install && npm run db:deploy && npm run build && pm2 restart <app>`.
 
 ## How TRACKLIST works
 

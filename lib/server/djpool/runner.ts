@@ -4,20 +4,34 @@ import { readdir } from "fs/promises";
 import { ZipArchive } from "archiver";
 import { randomUUID } from "crypto";
 import { jobManager } from "@/lib/server/jobs";
-import { jobDownloadDir } from "@/lib/server/paths";
+import { jobDownloadDir, jobTempDir, sanitizeFileName } from "@/lib/server/paths";
 import { toUserMessage } from "@/lib/errors";
-import { downloadPoolFile } from "@/lib/server/djpool/client";
+import { downloadPoolFile, isPoolUrl } from "@/lib/server/djpool/client";
 import { buildQuery, findCandidates } from "@/lib/server/djpool/matcher";
-import { DEFAULT_DJPOOL_PREFERENCES, type DjPoolPreferences, type DjPoolTrack } from "@/lib/types";
+import { searchYoutube } from "@/lib/server/ytdlp";
+import { youtubeToFile } from "@/lib/server/djdl/convert";
+import {
+  DEFAULT_DJPOOL_PREFERENCES,
+  DEFAULT_SOURCE_PREFS,
+  type DjPoolPreferences,
+  type DjPoolTrack,
+  type SourcePrefs,
+  type TrackPin,
+} from "@/lib/types";
 
 export interface DjPoolTrackInput {
   title: string;
   artist: string;
+  /** 1-based tracklist position, used as the "01 - " filename prefix. */
+  num?: number;
+  /** Specific version chosen in the picker — downloaded as-is, no search. */
+  pin?: TrackPin;
 }
 
 export interface DjPoolRequest {
   tracks: DjPoolTrackInput[];
   preferences: DjPoolPreferences;
+  sources?: SourcePrefs;
 }
 
 /** Pacing between pool requests to stay polite to the server. */
@@ -25,8 +39,8 @@ const REQUEST_DELAY_MS = 700;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function sanitizeFileName(name: string): string {
-  return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180);
+function numPrefix(num?: number): string {
+  return num ? `${String(num).padStart(2, "0")} - ` : "";
 }
 
 export function startDjPoolJob(jobId: string, request: DjPoolRequest): void {
@@ -44,12 +58,18 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
   if (!record) return;
   const signal = record.abort.signal;
   const prefs = { ...DEFAULT_DJPOOL_PREFERENCES, ...request.preferences };
+  const sources = { ...DEFAULT_SOURCE_PREFS, ...request.sources };
+  // Ordered list of sources to try per track.
+  const order = (
+    sources.priority === "youtube" ? (["youtube", "djpool"] as const) : (["djpool", "youtube"] as const)
+  ).filter((s) => sources[s]);
 
   const tracks: DjPoolTrack[] = request.tracks.map((t) => ({
     id: randomUUID(),
     query: buildQuery(t.title, t.artist),
     title: t.title,
     artist: t.artist,
+    num: t.num,
     status: "pending",
   }));
 
@@ -74,72 +94,173 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
       if (t) mutate(t);
     });
 
-  for (const track of tracks) {
+  const bump = (field: "downloaded" | "notFound" | "failed") =>
+    jobManager.update(jobId, (job) => {
+      if (job.djpool) {
+        job.djpool[field] += 1;
+        job.djpool.processed += 1;
+      }
+    });
+
+  const uniqueName = (name: string): string => {
+    let fileName = sanitizeFileName(name);
+    if (usedNames.has(fileName.toLowerCase())) {
+      const parsed = path.parse(fileName);
+      fileName = `${parsed.name} (${usedNames.size + 1})${parsed.ext}`;
+    }
+    usedNames.add(fileName.toLowerCase());
+    return fileName;
+  };
+
+  const onProgress = (trackId: string) => (percent: number) => {
+    // Every 5% is plenty for the UI and keeps SSE payload volume low.
+    if (percent % 5 === 0 || percent === 100) {
+      patch(trackId, (t) => {
+        t.progress = percent;
+      });
+    }
+  };
+
+  /** Try DJ Pool for one track. Returns true when a file was saved. */
+  const tryDjPool = async (track: DjPoolTrack): Promise<boolean> => {
+    const { candidates, matched } = await findCandidates(track.title, track.artist, prefs);
+    patch(track.id, (t) => {
+      t.candidates = candidates;
+    });
+    if (!matched) return false;
+
+    const best = candidates[0];
+    const fileName = uniqueName(
+      numPrefix(track.num) + (best.name.endsWith(`.${best.ext}`) ? best.name : `${best.name}.${best.ext}`),
+    );
+    patch(track.id, (t) => {
+      t.status = "downloading";
+      t.source = "djpool";
+      t.best = best;
+    });
+
+    const dest = path.join(outDir, fileName);
+    await downloadPoolFile(best.download, dest, signal, onProgress(track.id));
+    finishTrack(track.id, fileName, dest, "djpool");
+    return true;
+  };
+
+  /** Try YouTube for one track. Returns true when a file was saved. */
+  const tryYoutube = async (track: DjPoolTrack): Promise<boolean> => {
+    const results = await searchYoutube(track.query, 1, { signal });
+    if (results.length === 0) return false;
+
+    patch(track.id, (t) => {
+      t.status = "downloading";
+      t.source = "youtube";
+    });
+
+    const base = uniqueName(
+      `${numPrefix(track.num)}${track.artist ? `${track.artist} - ` : ""}${track.title}.mp3`,
+    ).replace(/\.mp3$/, "");
+    const { filePath, fileName } = await youtubeToFile({
+      url: results[0].url,
+      format: "mp3",
+      workDir: path.join(jobTempDir(jobId), `yt-${track.id}`),
+      outDir,
+      baseName: base,
+      signal,
+      onDownloadProgress: (e) => onProgress(track.id)(Math.round(e.percent ?? 0)),
+    });
+    finishTrack(track.id, fileName, filePath, "youtube");
+    return true;
+  };
+
+  /** Download the exact version the user pinned in the picker. */
+  const tryPin = async (track: DjPoolTrack, pin: TrackPin): Promise<boolean> => {
+    if (pin.source === "djpool") {
+      if (!sources.djpool || !isPoolUrl(pin.url)) return false;
+      const fileName = uniqueName(
+        numPrefix(track.num) + (pin.name || `${track.artist} - ${track.title}.mp3`),
+      );
+      patch(track.id, (t) => {
+        t.status = "downloading";
+        t.source = "djpool";
+      });
+      const dest = path.join(outDir, fileName);
+      await downloadPoolFile(pin.url, dest, signal, onProgress(track.id));
+      finishTrack(track.id, fileName, dest, "djpool");
+      return true;
+    }
+    patch(track.id, (t) => {
+      t.status = "downloading";
+      t.source = "youtube";
+    });
+    const base = uniqueName(
+      `${numPrefix(track.num)}${track.artist ? `${track.artist} - ` : ""}${track.title}.mp3`,
+    ).replace(/\.mp3$/, "");
+    const { filePath, fileName } = await youtubeToFile({
+      url: pin.url,
+      format: "mp3",
+      workDir: path.join(jobTempDir(jobId), `yt-${track.id}`),
+      outDir,
+      baseName: base,
+      signal,
+      onDownloadProgress: (e) => onProgress(track.id)(Math.round(e.percent ?? 0)),
+    });
+    finishTrack(track.id, fileName, filePath, "youtube");
+    return true;
+  };
+
+  const finishTrack = (trackId: string, fileName: string, filePath: string, source: "djpool" | "youtube") => {
+    const size = (() => {
+      try {
+        return statSync(filePath).size;
+      } catch {
+        return 0;
+      }
+    })();
+    patch(trackId, (t) => {
+      t.status = "downloaded";
+      t.progress = undefined;
+      t.source = source;
+      t.fileName = fileName;
+      t.fileSize = size;
+    });
+    bump("downloaded");
+  };
+
+  for (const [i, track] of tracks.entries()) {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
     patch(track.id, (t) => (t.status = "searching"));
     try {
-      const { candidates, matched } = await findCandidates(track.title, track.artist, prefs);
+      let saved = false;
 
-      if (!matched) {
+      // A pinned version wins over any search; sources are the fallback.
+      const pin = request.tracks[i]?.pin;
+      if (pin) {
+        try {
+          saved = await tryPin(track, pin);
+        } catch (err) {
+          if (signal.aborted) throw err;
+          console.warn(`[djpool ${jobId}] pinned version failed for "${track.query}":`, err);
+        }
+      }
+
+      for (const source of order) {
+        if (saved) break;
+        try {
+          saved = source === "djpool" ? await tryDjPool(track) : await tryYoutube(track);
+        } catch (err) {
+          if (signal.aborted) throw err;
+          // A source failing (e.g. YouTube bot check) should not sink the
+          // whole track when another source is still available.
+          console.warn(`[djpool ${jobId}] ${source} failed for "${track.query}":`, err);
+        }
+      }
+
+      if (!saved) {
         patch(track.id, (t) => {
           t.status = "notfound";
-          t.candidates = [];
         });
-        jobManager.update(jobId, (job) => {
-          if (job.djpool) {
-            job.djpool.notFound += 1;
-            job.djpool.processed += 1;
-          }
-        });
-        await sleep(REQUEST_DELAY_MS);
-        continue;
+        bump("notFound");
       }
-
-      const best = candidates[0];
-      patch(track.id, (t) => {
-        t.status = "downloading";
-        t.best = best;
-        t.candidates = candidates;
-      });
-
-      let fileName = sanitizeFileName(best.name.endsWith(`.${best.ext}`) ? best.name : `${best.name}.${best.ext}`);
-      // Avoid collisions when multiple tracks resolve to same name.
-      if (usedNames.has(fileName.toLowerCase())) {
-        const parsed = path.parse(fileName);
-        fileName = `${parsed.name} (${usedNames.size + 1})${parsed.ext}`;
-      }
-      usedNames.add(fileName.toLowerCase());
-
-      const dest = path.join(outDir, fileName);
-      const { bytes, serverName } = await downloadPoolFile(best.download, dest, signal, (percent) => {
-        // Every 5% is plenty for the UI and keeps SSE payload volume low.
-        if (percent % 5 === 0 || percent === 100) {
-          patch(track.id, (t) => {
-            t.progress = percent;
-          });
-        }
-      });
-      const size = (() => {
-        try {
-          return statSync(dest).size;
-        } catch {
-          return bytes;
-        }
-      })();
-
-      patch(track.id, (t) => {
-        t.status = "downloaded";
-        t.progress = undefined;
-        t.fileName = serverName ? sanitizeFileName(serverName) : fileName;
-        t.fileSize = size;
-      });
-      jobManager.update(jobId, (job) => {
-        if (job.djpool) {
-          job.djpool.downloaded += 1;
-          job.djpool.processed += 1;
-        }
-      });
     } catch (err) {
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       console.error(`[djpool ${jobId}] track "${track.query}"`, err);
@@ -147,12 +268,7 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
         t.status = "failed";
         t.error = toUserMessage(err);
       });
-      jobManager.update(jobId, (job) => {
-        if (job.djpool) {
-          job.djpool.failed += 1;
-          job.djpool.processed += 1;
-        }
-      });
+      bump("failed");
     }
 
     await sleep(REQUEST_DELAY_MS);
@@ -162,7 +278,7 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
 
   const downloaded = record.job.djpool?.downloaded ?? 0;
   if (downloaded === 0) {
-    jobManager.setStatus(jobId, "failed", "No matching tracks were found on DJ Pool Records.");
+    jobManager.setStatus(jobId, "failed", "No tracks could be downloaded from the selected sources.");
     return;
   }
 
@@ -179,7 +295,7 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
     });
   } else {
     jobManager.setStatus(jobId, "processing");
-    const zipName = `DJ Pool Records - ${downloaded} tracks.zip`;
+    const zipName = `Tracklist - ${downloaded} tracks.zip`;
     const zipPath = path.join(outDir, zipName);
     await zipFiles(outDir, files, zipPath);
     record.outputFile = zipPath;

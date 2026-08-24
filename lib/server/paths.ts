@@ -20,6 +20,11 @@ export function jobDownloadDir(jobId: string): string {
   return dir;
 }
 
+/** Make a name safe to write to disk on any OS. */
+export function sanitizeFileName(name: string): string {
+  return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
 export function cleanupJobTemp(jobId: string): void {
   const dir = path.join(TEMP_ROOT, jobId);
   if (!existsSync(dir)) return;

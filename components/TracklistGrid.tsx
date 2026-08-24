@@ -8,32 +8,49 @@ import {
   Download,
   Loader2,
   Music2,
+  Pin,
   Play,
   RotateCcw,
   Volume2,
+  SquarePlay,
 } from "lucide-react";
-import type { DjPoolCandidate, TrackEntry } from "@/lib/types";
+import type { DjPoolCandidate, SourcePrefs, TrackEntry, TrackPin, YoutubeVersion } from "@/lib/types";
 import { formatTimestamp } from "@/lib/tracklist";
 import type { DjRowState } from "@/lib/client/djpool";
 
+/** A pin plus the human label shown in tooltips. */
+export type PinnedVersion = TrackPin & { label: string };
+
 export interface DjPoolColumn {
   configured: boolean | null;
+  sources: SourcePrefs;
   /** Per-track state keyed by TrackEntry.id */
   rows: Record<string, DjRowState>;
+  /** Track ids excluded from Download All (absent = included). */
+  selected: Record<string, boolean>;
+  onToggleSelect: (track: TrackEntry) => void;
+  /** Versions pinned from the picker, keyed by TrackEntry.id. */
+  pins: Record<string, PinnedVersion>;
+  /** Pin a version for Download All (null clears the pin). */
+  onPin: (track: TrackEntry, pin: PinnedVersion | null) => void;
   picker: {
     trackId: string | null;
     loading: boolean;
     candidates: DjPoolCandidate[];
     error?: string;
+    youtube: { loading: boolean; results: YoutubeVersion[]; error?: string };
   };
   onDownload: (track: TrackEntry) => void;
+  onYoutubeGet: (track: TrackEntry) => void;
   onOpenPicker: (track: TrackEntry) => void;
   onClosePicker: () => void;
   onPick: (track: TrackEntry, candidate: DjPoolCandidate) => void;
+  onPickYoutube: (track: TrackEntry, item: YoutubeVersion) => void;
   /** Whether a probe-matched candidate exists that can be previewed. */
   canPlay: (track: TrackEntry) => boolean;
   onPlay: (track: TrackEntry) => void;
   onPlayCandidate: (track: TrackEntry, candidate: DjPoolCandidate) => void;
+  onPlayYoutube: (track: TrackEntry, item: YoutubeVersion) => void;
 }
 
 function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
@@ -42,7 +59,17 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
   const fileName = row?.fileName;
   const progress = row?.progress;
   const pickerOpen = dj.picker.trackId === track.id;
-  const disabled = dj.configured === false;
+  const poolEnabled = dj.sources.djpool && dj.configured !== false;
+  const ytEnabled = dj.sources.youtube;
+  const anySource = poolEnabled || ytEnabled;
+  const pinned = dj.pins[track.id];
+  // Which source the primary Get button uses when the row is still actionable.
+  // "Not on pool" rows fall through to YouTube; a pin overrides everything.
+  const primaryIsPool = pinned
+    ? pinned.source === "djpool"
+    : poolEnabled && state !== "notfound" && (dj.sources.priority === "djpool" || !ytEnabled);
+  const showGet =
+    state === "idle" || state === "available" || (state === "notfound" && (ytEnabled || pinned != null));
 
   return (
     <div className="relative flex items-center gap-1">
@@ -57,7 +84,7 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
         </span>
       )}
       {state === "downloading" && (
-        <div className="flex w-28 items-center gap-2" title="Downloading from DJ Pool">
+        <div className="flex w-28 items-center gap-2" title="Downloading">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
             {progress != null ? (
               <div
@@ -73,11 +100,24 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
           </span>
         </div>
       )}
-      {state === "notfound" && (
-        <span className="flex items-center gap-1.5 rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger">
-          <CircleSlash size={13} /> Not found
-        </span>
-      )}
+      {state === "notfound" &&
+        (ytEnabled || pinned ? (
+          // YouTube (or a pinned version) still covers this track — a soft
+          // note beats a scary red "Not found" that isn't really final.
+          <span
+            className="flex items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-300/90"
+            title="No strong match on DJ Pool — YouTube will be used instead"
+          >
+            <CircleSlash size={11} /> not on pool
+          </span>
+        ) : (
+          <span
+            className="flex items-center gap-1.5 rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger"
+            title="No strong match on DJ Pool — enable YouTube in Sources to still get this track"
+          >
+            <CircleSlash size={13} /> Not found
+          </span>
+        ))}
       {state === "done" && (
         <span className="flex max-w-32 items-center gap-1.5 text-xs text-success" title={fileName}>
           <Check size={13} className="shrink-0" /> <span className="truncate">Saved</span>
@@ -96,23 +136,43 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
 
       {(state === "idle" || state === "available" || state === "done" || state === "notfound" || state === "failed") && (
         <div className="flex items-center">
-          {(state === "idle" || state === "available") && (
+          {pinned && (
             <button
               type="button"
-              disabled={disabled}
-              onClick={() => dj.onDownload(track)}
-              className="flex items-center gap-1.5 rounded-l-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-              title={disabled ? "DJ Pool account not configured" : "Download best match"}
+              onClick={() => (pickerOpen ? dj.onClosePicker() : dj.onOpenPicker(track))}
+              className="mr-1 flex max-w-24 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-accent"
+              title={`Pinned for Download All: ${pinned.label} — click to change`}
             >
-              <Download size={13} /> Get
+              <Pin size={10} className="shrink-0" />
+              <span className="truncate">{pinned.source === "djpool" ? "pool" : "youtube"}</span>
             </button>
           )}
+          {showGet &&
+            (primaryIsPool ? (
+              <button
+                type="button"
+                onClick={() => dj.onDownload(track)}
+                className="flex items-center gap-1.5 rounded-l-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
+                title={pinned ? `Download pinned version: ${pinned.label}` : "Download best match from DJ Pool"}
+              >
+                <Download size={13} /> Get
+              </button>
+            ) : ytEnabled || pinned?.source === "youtube" ? (
+              <button
+                type="button"
+                onClick={() => dj.onYoutubeGet(track)}
+                className="flex items-center gap-1.5 rounded-l-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-red-400 hover:text-red-400"
+                title={pinned ? `Download pinned video: ${pinned.label}` : "Download from YouTube (MP3 320)"}
+              >
+                <SquarePlay size={13} /> Get
+              </button>
+            ) : null)}
           <button
             type="button"
-            disabled={disabled}
+            disabled={!anySource}
             onClick={() => (pickerOpen ? dj.onClosePicker() : dj.onOpenPicker(track))}
             className={`flex items-center rounded-lg border border-border bg-surface-2 px-1.5 py-1.5 text-muted transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 ${
-              state === "idle" || state === "available" ? "rounded-l-none border-l-0" : ""
+              showGet ? "rounded-l-none border-l-0" : ""
             } ${pickerOpen ? "border-accent text-accent" : ""}`}
             title="Choose a version"
           >
@@ -131,53 +191,154 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
               ✕
             </button>
           </div>
-          {dj.picker.loading ? (
-            <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-muted">
-              <Loader2 size={15} className="animate-spin" /> Searching DJ Pool…
-            </div>
-          ) : dj.picker.error ? (
-            <div className="px-3 py-4 text-sm text-danger">{dj.picker.error}</div>
-          ) : dj.picker.candidates.length === 0 ? (
-            <div className="px-3 py-4 text-sm text-muted">No versions found.</div>
-          ) : (
-            <div className="max-h-72 overflow-y-auto">
-              {dj.picker.candidates.map((c, i) => (
-                <div
-                  key={`${c.download}-${i}`}
-                  className="flex items-center gap-1 border-b border-border/50 last:border-0 hover:bg-surface-2"
-                >
-                  <button
-                    type="button"
-                    onClick={() => dj.onPlayCandidate(track, c)}
-                    className="shrink-0 rounded-full p-2 text-muted transition-colors hover:text-accent"
-                    title="Preview"
-                  >
-                    <Play size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => dj.onPick(track, c)}
-                    className="flex min-w-0 flex-1 items-start gap-2 py-2 pr-3 text-left"
-                    title="Download this version"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium">{c.name}</span>
-                      <span className="block truncate text-[11px] text-muted">
-                        {c.size}
-                        {c.reasons.length > 0 && ` · ${c.reasons.join(", ")}`}
-                      </span>
-                    </span>
-                    {i === 0 && (
-                      <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                        best
-                      </span>
-                    )}
-                    <Download size={13} className="mt-0.5 shrink-0 text-muted" />
-                  </button>
+          <div className="max-h-80 overflow-y-auto">
+            {/* DJ Pool section */}
+            {poolEnabled && (
+              <>
+                <div className="bg-surface-2/60 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                  DJ Pool Records
                 </div>
-              ))}
-            </div>
-          )}
+                {dj.picker.loading ? (
+                  <div className="flex items-center justify-center gap-2 px-3 py-4 text-sm text-muted">
+                    <Loader2 size={14} className="animate-spin" /> Searching…
+                  </div>
+                ) : dj.picker.error ? (
+                  <div className="px-3 py-3 text-xs text-danger">{dj.picker.error}</div>
+                ) : dj.picker.candidates.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-muted">No versions found.</div>
+                ) : (
+                  dj.picker.candidates.map((c, i) => {
+                    const isPinned = pinned?.source === "djpool" && pinned.url === c.download;
+                    const pinName = c.name.endsWith(`.${c.ext}`) ? c.name : `${c.name}.${c.ext}`;
+                    return (
+                      <div
+                        key={`${c.download}-${i}`}
+                        className="flex items-center gap-1 border-b border-border/50 last:border-0 hover:bg-surface-2"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => dj.onPlayCandidate(track, c)}
+                          className="shrink-0 rounded-full p-2 text-muted transition-colors hover:text-accent"
+                          title="Preview"
+                        >
+                          <Play size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => dj.onPick(track, c)}
+                          className="flex min-w-0 flex-1 items-start gap-2 py-2 pr-1 text-left"
+                          title="Download this version now"
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-medium">{c.name}</span>
+                            <span className="block truncate text-[11px] text-muted">
+                              {c.size}
+                              {c.reasons.length > 0 && ` · ${c.reasons.join(", ")}`}
+                            </span>
+                          </span>
+                          {i === 0 && (
+                            <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                              best
+                            </span>
+                          )}
+                          <Download size={13} className="mt-0.5 shrink-0 text-muted" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            dj.onPin(
+                              track,
+                              isPinned
+                                ? null
+                                : { source: "djpool", url: c.download, name: pinName, label: c.name },
+                            )
+                          }
+                          className={`mr-1 shrink-0 rounded-full p-2 transition-colors ${
+                            isPinned ? "text-accent" : "text-muted/50 hover:text-accent"
+                          }`}
+                          title={isPinned ? "Unpin" : "Use this version for Download All"}
+                        >
+                          <Pin size={13} className={isPinned ? "fill-current" : ""} />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </>
+            )}
+
+            {/* YouTube section */}
+            {ytEnabled && (
+              <>
+                <div className="flex items-center gap-1.5 bg-surface-2/60 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                  <SquarePlay size={11} /> YouTube · MP3 320
+                </div>
+                {dj.picker.youtube.loading ? (
+                  <div className="flex items-center justify-center gap-2 px-3 py-4 text-sm text-muted">
+                    <Loader2 size={14} className="animate-spin" /> Searching…
+                  </div>
+                ) : dj.picker.youtube.error ? (
+                  <div className="px-3 py-3 text-xs text-danger">{dj.picker.youtube.error}</div>
+                ) : dj.picker.youtube.results.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-muted">No results.</div>
+                ) : (
+                  dj.picker.youtube.results.map((v) => {
+                    const isPinned = pinned?.source === "youtube" && pinned.url === v.url;
+                    return (
+                      <div
+                        key={v.id}
+                        className="flex items-center gap-1 border-b border-border/50 last:border-0 hover:bg-surface-2"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => dj.onPlayYoutube(track, v)}
+                          className="ml-1 shrink-0 rounded-full p-2 text-muted transition-colors hover:text-accent"
+                          title="Preview"
+                        >
+                          <Play size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => dj.onPickYoutube(track, v)}
+                          className="flex min-w-0 flex-1 items-center gap-2.5 py-2 pr-1 text-left"
+                          title="Download this video's audio now"
+                        >
+                          <span className="relative h-8 w-14 shrink-0 overflow-hidden rounded border border-border bg-surface-2">
+                            {v.thumbnail && (
+                              <Image src={v.thumbnail} alt="" fill unoptimized sizes="56px" className="object-cover" />
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-medium">{v.title}</span>
+                            <span className="block truncate text-[11px] text-muted">
+                              {v.channel}
+                              {v.duration ? ` · ${formatTimestamp(v.duration)}` : ""}
+                            </span>
+                          </span>
+                          <Download size={13} className="shrink-0 text-muted" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            dj.onPin(
+                              track,
+                              isPinned ? null : { source: "youtube", url: v.url, label: v.title },
+                            )
+                          }
+                          className={`mr-1 shrink-0 rounded-full p-2 transition-colors ${
+                            isPinned ? "text-accent" : "text-muted/50 hover:text-accent"
+                          }`}
+                          title={isPinned ? "Unpin" : "Use this video for Download All"}
+                        >
+                          <Pin size={13} className={isPinned ? "fill-current" : ""} />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -214,8 +375,19 @@ export function TracklistGrid({
         return (
           <div
             key={track.id}
-            className="animate-track-in flex break-inside-avoid items-center gap-3 border-b border-border/60 py-3"
+            className={`animate-track-in flex break-inside-avoid items-center gap-3 border-b border-border/60 py-3 ${
+              djPool && djPool.selected[track.id] === false ? "opacity-45" : ""
+            }`}
           >
+            {djPool && (
+              <input
+                type="checkbox"
+                checked={djPool.selected[track.id] !== false}
+                onChange={() => djPool.onToggleSelect(track)}
+                className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#f31260]"
+                title="Include in Download All"
+              />
+            )}
             <span
               className={`w-9 shrink-0 text-2xl font-bold tabular-nums ${
                 isPlaying ? "text-accent-gradient" : "text-text/70"
