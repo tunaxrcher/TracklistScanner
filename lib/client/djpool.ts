@@ -16,6 +16,13 @@ export interface DjRowState {
   error?: string;
   /** Download progress 0-100 (undefined = size unknown / indeterminate). */
   progress?: number;
+  /** Last version that landed on disk (`source:url`). Used so a new pin can offer Get again. */
+  savedKey?: string;
+}
+
+/** Stable id for a chosen / saved version. */
+export function versionKey(source: "djpool" | "youtube", url?: string): string {
+  return `${source}:${url || "auto"}`;
 }
 
 /** Player src for previewing a DJ Pool candidate (shared by panel and picker). */

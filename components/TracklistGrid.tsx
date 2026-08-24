@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type { DjPoolCandidate, SourcePrefs, TrackEntry, TrackPin, YoutubeVersion } from "@/lib/types";
 import { formatTimestamp } from "@/lib/tracklist";
-import { djPoolStreamSrc, youtubeStreamSrc, type DjRowState } from "@/lib/client/djpool";
+import { djPoolStreamSrc, versionKey, youtubeStreamSrc, type DjRowState } from "@/lib/client/djpool";
 
 /** A pin plus the human label shown in tooltips. */
 export type PinnedVersion = TrackPin & { label: string };
@@ -73,8 +73,13 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
   const primaryIsPool = pinned
     ? pinned.source === "djpool"
     : poolEnabled && state !== "notfound" && !youtubeFirst;
+  // After Saved, Get comes back only when the user pins a *different* version.
+  const pinPending = Boolean(pinned && versionKey(pinned.source, pinned.url) !== row?.savedKey);
   const showGet =
-    state === "idle" || state === "available" || (state === "notfound" && (ytEnabled || pinned != null));
+    state === "idle" ||
+    state === "available" ||
+    (state === "notfound" && (ytEnabled || pinned != null)) ||
+    (state === "done" && pinPending);
   // Pool-miss badges only matter when DJ Pool is the source being tried first.
   // YouTube-first already covers every track — "not on pool" is just noise.
   const showPoolMiss = state === "notfound" && !youtubeFirst;
@@ -161,7 +166,13 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                 type="button"
                 onClick={() => dj.onDownload(track)}
                 className="flex items-center gap-1.5 rounded-l-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
-                title={pinned ? `Download pinned version: ${pinned.label}` : "Download best match from DJ Pool"}
+                title={
+                  pinned
+                    ? state === "done"
+                      ? `Download this version too: ${pinned.label}`
+                      : `Download pinned version: ${pinned.label}`
+                    : "Download best match from DJ Pool"
+                }
               >
                 <Download size={13} /> Get
               </button>
@@ -170,7 +181,13 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                 type="button"
                 onClick={() => dj.onYoutubeGet(track)}
                 className="flex items-center gap-1.5 rounded-l-lg border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-red-400 hover:text-red-400"
-                title={pinned ? `Download pinned video: ${pinned.label}` : "Download from YouTube (MP3 320)"}
+                title={
+                  pinned
+                    ? state === "done"
+                      ? `Download this video too: ${pinned.label}`
+                      : `Download pinned video: ${pinned.label}`
+                    : "Download from YouTube (MP3 320)"
+                }
               >
                 <SquarePlay size={13} /> Get
               </button>

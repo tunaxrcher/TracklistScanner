@@ -35,6 +35,7 @@ import {
   rowStatusFromJob,
   saveBlob,
   youtubeStreamSrc,
+  versionKey,
   type DjRowState,
 } from "@/lib/client/djpool";
 import { addRecent, type RecentItem } from "@/lib/client/recent";
@@ -189,16 +190,29 @@ export function TracklistPanel({
       djState.tracks.forEach((jt, i) => {
         const id = djJobTrackIds.current[i];
         if (!id) return;
+        const status = rowStatusFromJob(jt.status);
+        const prevRow = next[id];
+        // Don't let a pin made *after* Saved rewrite savedKey — that would
+        // hide Get for the version the user just chose.
+        const savedKey =
+          status === "done"
+            ? prevRow?.status === "done"
+              ? prevRow.savedKey
+              : pins[id]
+                ? versionKey(pins[id].source, pins[id].url)
+                : versionKey(jt.source ?? "djpool", jt.best?.download)
+            : prevRow?.savedKey;
         next[id] = {
-          status: rowStatusFromJob(jt.status),
-          fileName: jt.fileName,
+          status,
+          fileName: jt.fileName ?? prevRow?.fileName,
           error: jt.error,
           progress: jt.progress,
+          savedKey,
         };
       });
       return next;
     });
-  }, [djState]);
+  }, [djState, pins]);
 
   const playBest = useCallback(
     (track: TrackEntry) => {
@@ -312,7 +326,10 @@ export function TracklistPanel({
         );
         const name = filenameFromResponse(res, `${baseName}.mp3`);
         saveBlob(blob, name);
-        setDjRows((r) => ({ ...r, [track.id]: { status: "done", fileName: name } }));
+        setDjRows((r) => ({
+          ...r,
+          [track.id]: { status: "done", fileName: name, savedKey: versionKey("youtube", target?.url) },
+        }));
       } catch (err) {
         setDjRows((r) => ({ ...r, [track.id]: { status: "failed", error: (err as Error).message } }));
       }
@@ -365,7 +382,14 @@ export function TracklistPanel({
         const name =
           trackNumPrefix(track) + filenameFromResponse(res, `${track.artist} - ${track.title}.mp3`);
         saveBlob(blob, name);
-        setDjRows((r) => ({ ...r, [track.id]: { status: "done", fileName: name } }));
+        setDjRows((r) => ({
+          ...r,
+          [track.id]: {
+            status: "done",
+            fileName: name,
+            savedKey: versionKey("djpool", direct?.downloadUrl ?? cachedBest?.download),
+          },
+        }));
       } catch (err) {
         setDjRows((r) => ({ ...r, [track.id]: { status: "failed", error: (err as Error).message } }));
       }
@@ -463,7 +487,10 @@ export function TracklistPanel({
         );
         const name = trackNumPrefix(track) + filenameFromResponse(res, fallback);
         saveBlob(blob, name);
-        setDjRows((r) => ({ ...r, [track.id]: { status: "done", fileName: name } }));
+        setDjRows((r) => ({
+          ...r,
+          [track.id]: { status: "done", fileName: name, savedKey: versionKey("djpool", candidate.download) },
+        }));
       } catch (err) {
         setDjRows((r) => ({ ...r, [track.id]: { status: "failed", error: (err as Error).message } }));
       }
