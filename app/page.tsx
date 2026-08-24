@@ -66,7 +66,7 @@ export default function Home() {
           </div>
           <div>
             <h1 className="text-lg font-semibold leading-tight">Tracklist Scanner</h1>
-            <p className="text-xs text-muted">yt-dlp · FFmpeg · Shazam · ACRCloud · DJ Pool</p>
+            {/* <p className="text-xs text-muted">yt-dlp · FFmpeg · Shazam · ACRCloud · DJ Pool</p> */}
           </div>
         </div>
         <button
@@ -95,7 +95,7 @@ export default function Home() {
       </main>
 
       <footer className="mt-10 text-center text-xs text-muted/60">
-        Scan any URL or file to find out which songs are inside — then grab them from DJ Pool.
+        {/* Scan any URL or file to find out which songs are inside — then grab them from DJ Pool. */}
       </footer>
 
       {showSettings && (
