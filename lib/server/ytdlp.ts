@@ -1,4 +1,4 @@
-import { readdirSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import path from "path";
 import type { ChildProcess } from "child_process";
 import { resolveYtDlp } from "@/lib/server/bin";
@@ -9,6 +9,17 @@ import type { MediaInfo } from "@/lib/types";
 export interface YtDlpContext {
   signal?: AbortSignal;
   onSpawn?: (proc: ChildProcess) => void;
+}
+
+/**
+ * Args shared by every yt-dlp call. YTDLP_COOKIES points to a Netscape-format
+ * cookies.txt — needed on datacenter IPs where YouTube demands a signed-in
+ * session ("Sign in to confirm you're not a bot").
+ */
+function commonArgs(): string[] {
+  const cookies = process.env.YTDLP_COOKIES;
+  if (cookies && existsSync(cookies)) return ["--cookies", cookies];
+  return [];
 }
 
 export interface DownloadProgressEvent {
@@ -23,7 +34,7 @@ export async function fetchMediaInfo(url: string, ctx: YtDlpContext = {}): Promi
   const ytdlp = resolveYtDlp();
   const { code, stdout, stderr } = await run(
     ytdlp,
-    ["--no-playlist", "--no-warnings", "-J", "--", url],
+    ["--no-playlist", "--no-warnings", ...commonArgs(), "-J", "--", url],
     { signal: ctx.signal, onSpawn: ctx.onSpawn },
   );
   if (code !== 0) {
@@ -78,6 +89,7 @@ export async function fetchAudioForScan(
   const args = [
     "--no-playlist",
     "--no-warnings",
+    ...commonArgs(),
     "--newline",
     "--progress",
     "-f", "bestaudio/best",

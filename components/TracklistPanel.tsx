@@ -11,7 +11,6 @@ import {
   ListMusic,
   RotateCcw,
   ScanLine,
-  Share,
   Sparkles,
   Square,
   TriangleAlert,
