@@ -37,6 +37,8 @@ export interface DjPoolColumn {
     trackId: string | null;
     loading: boolean;
     candidates: DjPoolCandidate[];
+    /** Whether the pool candidates are a verified same-song match. */
+    matched: boolean;
     error?: string;
     youtube: { loading: boolean; results: YoutubeVersion[]; error?: string };
   };
@@ -207,7 +209,13 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                 ) : dj.picker.candidates.length === 0 ? (
                   <div className="px-3 py-3 text-xs text-muted">No versions found.</div>
                 ) : (
-                  dj.picker.candidates.map((c, i) => {
+                  <>
+                  {!dj.picker.matched && (
+                    <div className="px-3 pb-1 pt-2 text-[11px] text-amber-300/80">
+                      No exact match for this song — similar titles only:
+                    </div>
+                  )}
+                  {dj.picker.candidates.map((c, i) => {
                     const isPinned = pinned?.source === "djpool" && pinned.url === c.download;
                     const pinName = c.name.endsWith(`.${c.ext}`) ? c.name : `${c.name}.${c.ext}`;
                     return (
@@ -236,9 +244,12 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                               {c.reasons.length > 0 && ` · ${c.reasons.join(", ")}`}
                             </span>
                           </span>
-                          {i === 0 && (
-                            <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                              best
+                          {i === 0 && dj.picker.matched && (
+                            <span
+                              className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                              title="Verified same song — this is what Get / Download All picks from DJ Pool"
+                            >
+                              match
                             </span>
                           )}
                           <Download size={13} className="mt-0.5 shrink-0 text-muted" />
@@ -262,7 +273,8 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                         </button>
                       </div>
                     );
-                  })
+                  })}
+                  </>
                 )}
               </>
             )}
@@ -282,7 +294,7 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                 ) : dj.picker.youtube.results.length === 0 ? (
                   <div className="px-3 py-3 text-xs text-muted">No results.</div>
                 ) : (
-                  dj.picker.youtube.results.map((v) => {
+                  dj.picker.youtube.results.map((v, i) => {
                     const isPinned = pinned?.source === "youtube" && pinned.url === v.url;
                     return (
                       <div
@@ -315,6 +327,14 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                               {v.duration ? ` · ${formatTimestamp(v.duration)}` : ""}
                             </span>
                           </span>
+                          {i === 0 && (
+                            <span
+                              className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                              title="This is what Get / Download All picks from YouTube"
+                            >
+                              match
+                            </span>
+                          )}
                           <Download size={13} className="shrink-0 text-muted" />
                         </button>
                         <button

@@ -111,9 +111,17 @@ export function TracklistPanel({
     trackId: string | null;
     loading: boolean;
     candidates: DjPoolCandidate[];
+    /** Whether the pool candidates are a verified same-song match. */
+    matched: boolean;
     error?: string;
     youtube: { loading: boolean; results: YoutubeVersion[]; error?: string };
-  }>({ trackId: null, loading: false, candidates: [], youtube: { loading: false, results: [] } });
+  }>({
+    trackId: null,
+    loading: false,
+    candidates: [],
+    matched: false,
+    youtube: { loading: false, results: [] },
+  });
 
   // Where tracks are searched/downloaded from (DJ Pool / YouTube / both).
   const initialSources = useMemo(loadSourcePrefs, []);
@@ -258,6 +266,7 @@ export function TracklistPanel({
         trackId: null,
         loading: false,
         candidates: [],
+        matched: false,
         youtube: { loading: false, results: [] },
       }),
     [],
@@ -370,6 +379,9 @@ export function TracklistPanel({
         trackId: track.id,
         loading: needPoolFetch,
         candidates: cached ?? [],
+        // Cached candidates come from the availability probe, which only
+        // stores verified same-song matches.
+        matched: (cached?.length ?? 0) > 0,
         youtube: { loading: ytEnabled, results: [] },
       });
 
@@ -380,10 +392,16 @@ export function TracklistPanel({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ title: track.title, artist: track.artist, preferences: settings.djpool }),
           });
-          const data = (await res.json()) as { candidates?: DjPoolCandidate[]; error?: string };
+          const data = (await res.json()) as {
+            candidates?: DjPoolCandidate[];
+            matched?: boolean;
+            error?: string;
+          };
           if (!res.ok) throw new Error(data.error ?? "Search failed.");
           setPicker((p) =>
-            p.trackId === track.id ? { ...p, loading: false, candidates: data.candidates ?? [] } : p,
+            p.trackId === track.id
+              ? { ...p, loading: false, candidates: data.candidates ?? [], matched: data.matched === true }
+              : p,
           );
         } catch (err) {
           setPicker((p) =>
@@ -503,6 +521,10 @@ export function TracklistPanel({
     // Probing only makes sense once the user has picked sources, and only
     // when DJ Pool is one of them (YouTube has everything, nothing to probe).
     if (!probeKey || !sourcesChosen || !sourcePrefs.djpool || djPoolConfigured === false) return;
+    // When YouTube is tried first, every track is covered by YouTube anyway —
+    // pool availability is irrelevant noise ("not on pool" badges), so skip
+    // the probe entirely. Pool candidates still load in the picker on demand.
+    if (sourcePrefs.youtube && sourcePrefs.priority === "youtube") return;
     const tracks = sourceTracks;
     if (tracks.length === 0) return;
     if (probedJobId.current === probeKey) return;
@@ -580,7 +602,16 @@ export function TracklistPanel({
     return () => {
       cancelled = true;
     };
-  }, [probeKey, sourceTracks, djPoolConfigured, settings.djpool, sourcesChosen, sourcePrefs.djpool]);
+  }, [
+    probeKey,
+    sourceTracks,
+    djPoolConfigured,
+    settings.djpool,
+    sourcesChosen,
+    sourcePrefs.djpool,
+    sourcePrefs.youtube,
+    sourcePrefs.priority,
+  ]);
 
   /** Confirm handler for the source chooser dialog. */
   const onSourcesConfirm = (prefs: SourcePrefs, remember: boolean) => {
