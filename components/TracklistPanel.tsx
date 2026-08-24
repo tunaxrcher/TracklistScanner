@@ -480,12 +480,12 @@ export function TracklistPanel({
       displayTracks
         .map((track, i) => ({ track, num: i + 1 }))
         .filter(({ track }) => selected[track.id] !== false)
-        .filter(
-          ({ track }) =>
-            pins[track.id] != null ||
-            sourcePrefs.youtube ||
-            djRows[track.id]?.status !== "notfound",
-        ),
+        .filter(({ track }) => {
+          if (pins[track.id] != null || sourcePrefs.youtube) return true;
+          const status = djRows[track.id]?.status;
+          // idle/checking = probe not finished — don't pretend they're downloadable
+          return status === "available" || status === "done" || status === "downloading";
+        }),
     [displayTracks, djRows, sourcePrefs.youtube, selected, pins],
   );
 
@@ -532,8 +532,11 @@ export function TracklistPanel({
     if (sourcePrefs.youtube && sourcePrefs.priority === "youtube") return;
     const tracks = sourceTracks;
     if (tracks.length === 0) return;
+    // Skip only after a probe of this tracklist actually finished. The guard
+    // is set at the end (not the start) so a cancelled in-flight run — React
+    // Strict Mode remount, source change — can start again instead of leaving
+    // every row stuck on a blank "Get".
     if (probedJobId.current === probeKey) return;
-    probedJobId.current = probeKey;
 
     let cancelled = false;
 
@@ -602,7 +605,9 @@ export function TracklistPanel({
     };
 
     const CONCURRENCY = 4;
-    void Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+    void Promise.all(Array.from({ length: CONCURRENCY }, () => worker())).then(() => {
+      if (!cancelled) probedJobId.current = probeKey;
+    });
 
     return () => {
       cancelled = true;
@@ -620,20 +625,29 @@ export function TracklistPanel({
 
   /** Confirm handler for the source chooser dialog. */
   const onSourcesConfirm = (prefs: SourcePrefs, remember: boolean) => {
+    const wouldProbe = (p: SourcePrefs) =>
+      p.djpool && !(p.youtube && p.priority === "youtube");
     setSourcePrefs(prefs);
     setSourcesChosen(true);
     setSourceDialogOpen(false);
     saveSourcePrefs(prefs, remember);
-    // Reset probe results so they reflect the new source selection; rows the
-    // user already downloaded are preserved by the probe's own guards.
-    setDjRows((prev) => {
-      const next: typeof prev = {};
-      for (const [id, row] of Object.entries(prev)) {
-        next[id] = row.status === "done" || row.status === "downloading" ? row : { status: "idle" };
-      }
-      return next;
-    });
-    probedJobId.current = null;
+    // Pool probe results ("Not found" / available) stay valid whenever DJ Pool
+    // is still the source being probed. Wiping them on Continue — even when
+    // only priority/YouTube flipped — left every row as a blank "Get" if the
+    // effect decided it had already probed this tracklist.
+    if (wouldProbe(sourcePrefs) && wouldProbe(prefs)) return;
+    // Switching *into* a DJ Pool-first probe (YouTube-first → pool first, or
+    // pool just turned on): drop stale idle rows so the probe can refill them.
+    if (wouldProbe(prefs)) {
+      setDjRows((prev) => {
+        const next: typeof prev = {};
+        for (const [id, row] of Object.entries(prev)) {
+          next[id] = row.status === "done" || row.status === "downloading" ? row : { status: "idle" };
+        }
+        return next;
+      });
+      probedJobId.current = null;
+    }
   };
 
   const djColumn: DjPoolColumn = {

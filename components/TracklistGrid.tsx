@@ -65,19 +65,23 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
   const pickerOpen = dj.picker.trackId === track.id;
   const poolEnabled = dj.sources.djpool && dj.configured !== false;
   const ytEnabled = dj.sources.youtube;
+  const youtubeFirst = ytEnabled && dj.sources.priority === "youtube";
   const anySource = poolEnabled || ytEnabled;
   const pinned = dj.pins[track.id];
   // Which source the primary Get button uses when the row is still actionable.
   // "Not on pool" rows fall through to YouTube; a pin overrides everything.
   const primaryIsPool = pinned
     ? pinned.source === "djpool"
-    : poolEnabled && state !== "notfound" && (dj.sources.priority === "djpool" || !ytEnabled);
+    : poolEnabled && state !== "notfound" && !youtubeFirst;
   const showGet =
     state === "idle" || state === "available" || (state === "notfound" && (ytEnabled || pinned != null));
+  // Pool-miss badges only matter when DJ Pool is the source being tried first.
+  // YouTube-first already covers every track — "not on pool" is just noise.
+  const showPoolMiss = state === "notfound" && !youtubeFirst;
 
   return (
     <div className="relative flex items-center gap-1">
-      {state === "checking" && (
+      {state === "checking" && !youtubeFirst && (
         <span className="flex items-center gap-1.5 text-xs text-muted">
           <Loader2 size={13} className="animate-spin" /> Checking…
         </span>
@@ -104,7 +108,7 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
           </span>
         </div>
       )}
-      {state === "notfound" &&
+      {showPoolMiss &&
         (ytEnabled || pinned ? (
           // YouTube (or a pinned version) still covers this track — a soft
           // note beats a scary red "Not found" that isn't really final.
