@@ -18,6 +18,16 @@ export interface DjRowState {
   progress?: number;
 }
 
+/** Player src for previewing a DJ Pool candidate (shared by panel and picker). */
+export function djPoolStreamSrc(candidate: DjPoolCandidate): string {
+  return `/api/djpool/stream?u=${encodeURIComponent(candidate.stream || candidate.download)}`;
+}
+
+/** Player src for previewing a YouTube video's audio. */
+export function youtubeStreamSrc(videoUrl: string): string {
+  return `/api/youtube/stream?u=${encodeURIComponent(videoUrl)}`;
+}
+
 /** Map a server-side job track status onto the table's row status. */
 export function rowStatusFromJob(status: DjPoolTrackStatus): DjRowStatus {
   switch (status) {

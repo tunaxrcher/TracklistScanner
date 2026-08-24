@@ -29,10 +29,12 @@ import type {
 import type { PinnedVersion } from "@/components/TracklistGrid";
 import { cleanTracklist, formatTimestamp, mergeTracklists } from "@/lib/tracklist";
 import {
+  djPoolStreamSrc,
   filenameFromResponse,
   readBlobWithProgress,
   rowStatusFromJob,
   saveBlob,
+  youtubeStreamSrc,
   type DjRowState,
 } from "@/lib/client/djpool";
 import { addRecent, type RecentItem } from "@/lib/client/recent";
@@ -198,9 +200,6 @@ export function TracklistPanel({
     });
   }, [djState]);
 
-  const streamSrc = (candidate: DjPoolCandidate) =>
-    `/api/djpool/stream?u=${encodeURIComponent(candidate.stream || candidate.download)}`;
-
   const playBest = useCallback(
     (track: TrackEntry) => {
       const best = djCandidates[track.id]?.[0];
@@ -213,21 +212,27 @@ export function TracklistPanel({
               name: best.name,
               subtitle: `${track.artist} · ${track.title}`,
               cover: track.coverUrl,
-              src: streamSrc(best),
+              src: djPoolStreamSrc(best),
             },
       );
     },
     [djCandidates],
   );
 
+  /** Preview a specific pool candidate; pressing the playing one stops it. */
   const playCandidate = useCallback((track: TrackEntry, candidate: DjPoolCandidate) => {
-    setNowPlaying({
-      trackId: track.id,
-      name: candidate.name,
-      subtitle: `${track.artist} · ${track.title}`,
-      cover: track.coverUrl,
-      src: streamSrc(candidate),
-    });
+    const src = djPoolStreamSrc(candidate);
+    setNowPlaying((cur) =>
+      cur?.src === src
+        ? null
+        : {
+            trackId: track.id,
+            name: candidate.name,
+            subtitle: `${track.artist} · ${track.title}`,
+            cover: track.coverUrl,
+            src,
+          },
+    );
   }, []);
 
   const canPlay = useCallback(
@@ -237,7 +242,7 @@ export function TracklistPanel({
 
   /** Preview a YouTube result from the picker (streams audio, nothing saved). */
   const playYoutube = useCallback((track: TrackEntry, video: YoutubeVersion) => {
-    const src = `/api/youtube/stream?u=${encodeURIComponent(video.url)}`;
+    const src = youtubeStreamSrc(video.url);
     setNowPlaying((cur) =>
       cur?.src === src
         ? null
@@ -657,6 +662,7 @@ export function TracklistPanel({
     onPlay: playBest,
     onPlayCandidate: playCandidate,
     onPlayYoutube: playYoutube,
+    playingSrc: nowPlaying?.src,
   };
 
   const anySourceUsable = (sourcePrefs.djpool && djPoolConfigured !== false) || sourcePrefs.youtube;

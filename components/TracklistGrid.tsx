@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type { DjPoolCandidate, SourcePrefs, TrackEntry, TrackPin, YoutubeVersion } from "@/lib/types";
 import { formatTimestamp } from "@/lib/tracklist";
-import type { DjRowState } from "@/lib/client/djpool";
+import { djPoolStreamSrc, youtubeStreamSrc, type DjRowState } from "@/lib/client/djpool";
 
 /** A pin plus the human label shown in tooltips. */
 export type PinnedVersion = TrackPin & { label: string };
@@ -53,6 +53,8 @@ export interface DjPoolColumn {
   onPlay: (track: TrackEntry) => void;
   onPlayCandidate: (track: TrackEntry, candidate: DjPoolCandidate) => void;
   onPlayYoutube: (track: TrackEntry, item: YoutubeVersion) => void;
+  /** Player src currently in the bottom bar — highlights the playing row. */
+  playingSrc?: string;
 }
 
 function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
@@ -217,19 +219,24 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                   )}
                   {dj.picker.candidates.map((c, i) => {
                     const isPinned = pinned?.source === "djpool" && pinned.url === c.download;
+                    const isPlaying = dj.playingSrc === djPoolStreamSrc(c);
                     const pinName = c.name.endsWith(`.${c.ext}`) ? c.name : `${c.name}.${c.ext}`;
                     return (
                       <div
                         key={`${c.download}-${i}`}
-                        className="flex items-center gap-1 border-b border-border/50 last:border-0 hover:bg-surface-2"
+                        className={`flex items-center gap-1 border-b border-border/50 last:border-0 hover:bg-surface-2 ${
+                          isPlaying ? "bg-accent-soft/40" : ""
+                        }`}
                       >
                         <button
                           type="button"
                           onClick={() => dj.onPlayCandidate(track, c)}
-                          className="shrink-0 rounded-full p-2 text-muted transition-colors hover:text-accent"
-                          title="Preview"
+                          className={`shrink-0 rounded-full p-2 transition-colors hover:text-accent ${
+                            isPlaying ? "text-accent" : "text-muted"
+                          }`}
+                          title={isPlaying ? "Stop preview" : "Preview"}
                         >
-                          <Play size={13} />
+                          {isPlaying ? <Volume2 size={13} className="animate-pulse-soft" /> : <Play size={13} />}
                         </button>
                         <button
                           type="button"
@@ -238,7 +245,7 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                           title="Download this version now"
                         >
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-medium">{c.name}</span>
+                            <span className={`block truncate text-xs font-medium ${isPlaying ? "text-accent" : ""}`}>{c.name}</span>
                             <span className="block truncate text-[11px] text-muted">
                               {c.size}
                               {c.reasons.length > 0 && ` · ${c.reasons.join(", ")}`}
@@ -296,18 +303,23 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                 ) : (
                   dj.picker.youtube.results.map((v, i) => {
                     const isPinned = pinned?.source === "youtube" && pinned.url === v.url;
+                    const isPlaying = dj.playingSrc === youtubeStreamSrc(v.url);
                     return (
                       <div
                         key={v.id}
-                        className="flex items-center gap-1 border-b border-border/50 last:border-0 hover:bg-surface-2"
+                        className={`flex items-center gap-1 border-b border-border/50 last:border-0 hover:bg-surface-2 ${
+                          isPlaying ? "bg-accent-soft/40" : ""
+                        }`}
                       >
                         <button
                           type="button"
                           onClick={() => dj.onPlayYoutube(track, v)}
-                          className="ml-1 shrink-0 rounded-full p-2 text-muted transition-colors hover:text-accent"
-                          title="Preview"
+                          className={`ml-1 shrink-0 rounded-full p-2 transition-colors hover:text-accent ${
+                            isPlaying ? "text-accent" : "text-muted"
+                          }`}
+                          title={isPlaying ? "Stop preview" : "Preview"}
                         >
-                          <Play size={13} />
+                          {isPlaying ? <Volume2 size={13} className="animate-pulse-soft" /> : <Play size={13} />}
                         </button>
                         <button
                           type="button"
@@ -321,7 +333,7 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                             )}
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-medium">{v.title}</span>
+                            <span className={`block truncate text-xs font-medium ${isPlaying ? "text-accent" : ""}`}>{v.title}</span>
                             <span className="block truncate text-[11px] text-muted">
                               {v.channel}
                               {v.duration ? ` · ${formatTimestamp(v.duration)}` : ""}

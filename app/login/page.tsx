@@ -32,12 +32,25 @@ export default async function LoginPage({
   const errorMessage = error ? (ERROR_MESSAGES[error] ?? ERROR_MESSAGES.failed) : null;
 
   return (
-    <div className="relative min-h-screen overflow-hidden pb-20">
+    <div className="relative min-h-dvh overflow-hidden lg:h-dvh">
       {/* Ambient glow */}
       <div className="pointer-events-none absolute -top-40 right-0 h-[600px] w-[600px] rounded-full bg-accent/20 blur-[160px]" />
       <div className="pointer-events-none absolute bottom-0 left-1/3 h-[400px] w-[400px] rounded-full bg-[#8b12f0]/15 blur-[140px]" />
 
-      <div className="mx-auto grid min-h-screen max-w-6xl grid-cols-1 items-center gap-8 px-6 lg:grid-cols-2 lg:px-8">
+      {/* Right: hero (full-bleed) */}
+      <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-[55%] lg:block">
+        <div className="absolute inset-x-12 inset-y-24 rounded-[40px] bg-accent-gradient opacity-20 blur-3xl" />
+        <Image
+          src="/login-hero.png"
+          alt=""
+          fill
+          priority
+          sizes="55vw"
+          className="object-cover object-[center_top] drop-shadow-[0_20px_60px_rgba(139,18,240,0.35)]"
+        />
+      </div>
+
+      <div className="mx-auto grid h-full max-w-6xl grid-cols-1 items-center gap-8 px-6 lg:grid-cols-2 lg:px-8">
         {/* Left: brand + sign in */}
         <div className="relative z-10 py-16 lg:py-0">
           <div className="mb-10 flex items-center gap-3">
@@ -72,18 +85,8 @@ export default async function LoginPage({
           )}
         </div>
 
-        {/* Right: hero */}
-        <div className="relative hidden h-full min-h-[560px] items-end justify-center lg:flex">
-          <div className="absolute inset-x-8 bottom-16 top-24 rounded-[40px] bg-accent-gradient opacity-20 blur-2xl" />
-          <Image
-            src="/login-hero.png"
-            alt=""
-            width={860}
-            height={806}
-            priority
-            className="relative z-10 max-h-[80vh] w-auto object-contain drop-shadow-[0_20px_60px_rgba(139,18,240,0.35)]"
-          />
-        </div>
+        {/* Right column spacer (image is full-bleed above) */}
+        <div className="hidden lg:block" />
       </div>
 
       <LobbyPlayer />
