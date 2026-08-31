@@ -42,7 +42,7 @@ export function DownloadForDjPanel() {
   return (
     <div className="mx-auto max-w-2xl">
       <div className="rounded-2xl border border-border bg-surface p-6">
-        <div className="mb-5 flex items-center gap-3">
+        {/* <div className="mb-5 flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-accent">
             <Disc3 size={18} />
           </div>
@@ -52,7 +52,7 @@ export function DownloadForDjPanel() {
               Paste a YouTube link — get the highest-quality audio, ready to play.
             </p>
           </div>
-        </div>
+        </div> */}
 
         {/* URL input */}
         <div className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 focus-within:border-accent/60">
@@ -78,11 +78,10 @@ export function DownloadForDjPanel() {
               type="button"
               disabled={running}
               onClick={() => setFormat(f.id)}
-              className={`rounded-xl border px-4 py-3 text-left transition-colors disabled:opacity-50 ${
-                format === f.id
+              className={`rounded-xl border px-4 py-3 text-left transition-colors disabled:opacity-50 ${format === f.id
                   ? "border-accent bg-accent-soft/60"
                   : "border-border bg-surface-2 hover:border-border-strong"
-              }`}
+                }`}
             >
               <div className="text-sm font-semibold">{f.label}</div>
               <div className="mt-0.5 text-[11px] leading-snug text-muted">{f.hint}</div>
@@ -99,8 +98,8 @@ export function DownloadForDjPanel() {
               disabled={!url.trim() || starting}
               className="flex items-center gap-2 rounded-xl bg-accent-gradient px-5 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {starting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-              Get audio
+              {starting ? <Loader2 size={15} className="animate-spin" /> : <Disc3 size={15} />}
+              Start Scan Audio
             </button>
           )}
           {running && (
@@ -112,7 +111,7 @@ export function DownloadForDjPanel() {
               <Square size={13} /> Stop
             </button>
           )}
-          {job && !running && (
+          {/* {job && !running && (
             <button
               type="button"
               onClick={() => {
@@ -123,7 +122,7 @@ export function DownloadForDjPanel() {
             >
               <RotateCcw size={13} /> New
             </button>
-          )}
+          )} */}
         </div>
 
         {error && <p className="mt-4 text-sm text-danger">{error}</p>}
@@ -131,51 +130,55 @@ export function DownloadForDjPanel() {
 
         {/* Progress / result */}
         {job && state && !failed && (
-          <div className="mt-6 rounded-xl border border-border bg-surface-2 p-4">
-            <div className="flex items-center gap-3">
-              {state.info?.thumbnail && (
-                <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-lg border border-border">
-                  <Image src={state.info.thumbnail} alt="" fill unoptimized sizes="96px" className="object-cover" />
+          <div className="mt-6">
+            <hr className="h-px border-0 bg-white/20" />
+
+            <div className="mt-6 rounded-xl border border-border bg-surface-2 p-4">
+              <div className="flex items-center gap-3">
+                {state.info?.thumbnail && (
+                  <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-lg border border-border">
+                    <Image src={state.info.thumbnail} alt="" fill unoptimized sizes="96px" className="object-cover" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium" title={state.info?.title}>
+                    {state.info?.title ?? state.url}
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted">
+                    {state.info?.uploader}
+                    {state.info?.uploader && " · "}
+                    {state.format.toUpperCase()}
+                  </div>
+                </div>
+              </div>
+
+              {running && (
+                <div className="mt-4">
+                  <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 size={12} className="animate-spin" />
+                      {PHASE_LABEL[job.status] ?? "Working…"}
+                    </span>
+                    {job.status === "downloading" && <span>{state.downloadProgress}%</span>}
+                  </div>
+                  <ProgressBar
+                    value={job.status === "processing" ? 100 : state.downloadProgress}
+                    active={running}
+                  />
                 </div>
               )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium" title={state.info?.title}>
-                  {state.info?.title ?? state.url}
-                </div>
-                <div className="mt-0.5 text-xs text-muted">
-                  {state.info?.uploader}
-                  {state.info?.uploader && " · "}
-                  {state.format.toUpperCase()}
-                </div>
-              </div>
+
+              {completed && state.fileName && (
+                <a
+                  href={`/api/jobs/${job.id}/file`}
+                  className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-success px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                >
+                  <Download size={15} />
+                  Save {state.fileName}
+                  {state.fileSize ? ` (${formatBytes(state.fileSize)})` : ""}
+                </a>
+              )}
             </div>
-
-            {running && (
-              <div className="mt-4">
-                <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                  <span className="flex items-center gap-1.5">
-                    <Loader2 size={12} className="animate-spin" />
-                    {PHASE_LABEL[job.status] ?? "Working…"}
-                  </span>
-                  {job.status === "downloading" && <span>{state.downloadProgress}%</span>}
-                </div>
-                <ProgressBar
-                  value={job.status === "processing" ? 100 : state.downloadProgress}
-                  active={running}
-                />
-              </div>
-            )}
-
-            {completed && state.fileName && (
-              <a
-                href={`/api/jobs/${job.id}/file`}
-                className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-success px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-              >
-                <Download size={15} />
-                Save {state.fileName}
-                {state.fileSize ? ` (${formatBytes(state.fileSize)})` : ""}
-              </a>
-            )}
           </div>
         )}
       </div>
