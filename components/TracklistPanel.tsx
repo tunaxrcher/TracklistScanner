@@ -872,7 +872,7 @@ export function TracklistPanel({
   return (
     <div className={`space-y-8 ${nowPlaying ? "pb-24" : ""}`}>
       {/* ---------- Scan section ---------- */}
-      <section className="rounded-2xl border border-border bg-surface/50 p-5 lg:p-7">
+      <section className="mx-auto max-w-3xl rounded-2xl border border-border bg-surface/50 p-5 lg:p-7">
         {!job ? (
           <div className="space-y-6">
             <div>

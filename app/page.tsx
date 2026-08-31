@@ -82,7 +82,7 @@ export default function Home() {
   if (health && (!health.ffmpeg || !health.ffprobe)) missing.push("FFmpeg");
 
   return (
-    <div className="mx-auto min-h-screen max-w-6xl px-4 py-8 lg:px-8 lg:py-10">
+    <div className="mx-auto min-h-screen max-w-[90rem] px-4 py-8 lg:px-8 lg:py-10">
       {/* Header */}
       <header className="mb-8 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">

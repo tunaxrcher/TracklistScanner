@@ -183,10 +183,10 @@ export function DownloadForDjPanel() {
         )}
       </div>
 
-      <p className="mt-4 text-center text-[11px] leading-relaxed text-muted/70">
+      {/* <p className="mt-4 text-center text-[11px] leading-relaxed text-muted/70">
         YouTube serves audio at ~130–160 kbps Opus. WAV keeps every bit of that without
         another lossy encode; MP3 320 re-encodes once for smaller, tagged files.
-      </p>
+      </p> */}
     </div>
   );
 }

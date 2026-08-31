@@ -38,7 +38,7 @@ export function PlayerBar({ track, onClose }: { track: NowPlaying; onClose: () =
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 bg-surface/95 shadow-[0_-8px_30px_rgba(0,0,0,0.5)] backdrop-blur-md">
       <div className="h-0.5 w-full bg-accent-gradient" />
-      <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3.5 sm:gap-6 lg:px-8">
+      <div className="mx-auto flex max-w-[90rem] items-center gap-4 px-4 py-3.5 sm:gap-6 lg:px-8">
         <audio
           ref={audioRef}
           src={track.src}
