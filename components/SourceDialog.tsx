@@ -10,12 +10,12 @@ const META: Record<SourceId, { label: string; icon: typeof Disc3; hint: string }
   djpool: {
     label: "DJ Pool Records",
     icon: Disc3,
-    hint: "Clean / DJ-ready versions from your pool subscription",
+    hint: "" //"Clean / DJ-ready versions from your pool subscription",
   },
   youtube: {
     label: "YouTube",
     icon: SquarePlay,
-    hint: "Always available — converted to MP3 320 automatically",
+    hint: "" //"Always available — converted to MP3 320 automatically",
   },
 };
 

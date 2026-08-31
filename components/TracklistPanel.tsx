@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ChevronDown,
   DownloadCloud,
   FileArchive,
   FileAudio,
@@ -99,6 +100,7 @@ export function TracklistPanel({
 }) {
   const [mode, setMode] = useState<ScanMode>("url");
   const [preset, setPreset] = useState<ScanPreset>("thorough");
+  const [modeOpen, setModeOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [cleaned, setCleaned] = useState(false);
@@ -988,30 +990,44 @@ export function TracklistPanel({
               </div>
             )}
 <hr className="h-px border-0 bg-white/20" />
-            {/* Scan preset */}
+            {/* Scan preset — collapsed by default; people rarely change it. */}
             <div>
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
-                MODE
-              </label>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                {PRESETS.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setPreset(p.id)}
-                    className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-                      preset === p.id
-                        ? "border-accent bg-accent-soft/60"
-                        : "border-border bg-surface hover:border-border-strong"
-                    }`}
-                  >
-                    <div className={`text-sm font-semibold ${preset === p.id ? "text-accent" : ""}`}>
-                      {p.name}
-                    </div>
-                    <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{p.description}</div>
-                  </button>
-                ))}
-              </div>
+              <button
+                type="button"
+                onClick={() => setModeOpen((o) => !o)}
+                className="flex w-full items-center gap-2 text-left"
+                aria-expanded={modeOpen}
+              >
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">MODE</span>
+                <span className="text-xs font-medium text-accent">
+                  {PRESETS.find((p) => p.id === preset)?.name}
+                </span>
+                <ChevronDown
+                  size={14}
+                  className={`ml-auto text-muted transition-transform ${modeOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {modeOpen && (
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setPreset(p.id)}
+                      className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                        preset === p.id
+                          ? "border-accent bg-accent-soft/60"
+                          : "border-border bg-surface hover:border-border-strong"
+                      }`}
+                    >
+                      <div className={`text-sm font-semibold ${preset === p.id ? "text-accent" : ""}`}>
+                        {p.name}
+                      </div>
+                      <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{p.description}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <button

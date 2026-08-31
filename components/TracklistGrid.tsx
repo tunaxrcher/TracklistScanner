@@ -121,7 +121,7 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
             className="flex items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-300/90"
             title="No strong match on DJ Pool — YouTube will be used instead"
           >
-            <CircleSlash size={11} /> not on pool
+            <CircleSlash size={11} /> not on DJpool
           </span>
         ) : (
           <span
