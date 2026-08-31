@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appUrl } from "@/lib/auth/origin";
 import { SESSION_COOKIE, authSecret, verifySessionToken } from "@/lib/auth/session";
 
 // Paths reachable without a session.
@@ -19,7 +20,7 @@ export async function proxy(request: NextRequest) {
   if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) {
     // Already signed in → skip the login page.
     if (session && pathname === "/login") {
-      return NextResponse.redirect(new URL("/", request.url));
+      return NextResponse.redirect(appUrl(request, "/"));
     }
     return NextResponse.next();
   }
@@ -29,7 +30,7 @@ export async function proxy(request: NextRequest) {
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   }
-  return NextResponse.redirect(new URL("/login", request.url));
+  return NextResponse.redirect(appUrl(request, "/login"));
 }
 
 export const config = {

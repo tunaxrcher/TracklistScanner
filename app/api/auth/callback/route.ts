@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appUrl } from "@/lib/auth/origin";
 import { exchangeCode } from "@/lib/auth/google";
 import { isDbConfigured } from "@/lib/server/db";
 import { upsertUser } from "@/lib/server/recents";
@@ -13,7 +14,7 @@ import {
 export const runtime = "nodejs";
 
 function loginRedirect(request: NextRequest, error: string): NextResponse {
-  const res = NextResponse.redirect(new URL(`/login?error=${error}`, request.url));
+  const res = NextResponse.redirect(appUrl(request, `/login?error=${error}`));
   res.cookies.delete("oauth_state");
   return res;
 }
@@ -50,7 +51,7 @@ export async function GET(request: NextRequest) {
       authSecret(),
     );
 
-    const res = NextResponse.redirect(new URL("/", request.url));
+    const res = NextResponse.redirect(appUrl(request, "/"));
     res.cookies.delete("oauth_state");
     res.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,

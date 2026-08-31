@@ -1,4 +1,7 @@
 import type { NextRequest } from "next/server";
+import { appOrigin } from "@/lib/auth/origin";
+
+export { appOrigin };
 
 // Google OAuth 2.0 endpoints (authorization code flow).
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -6,17 +9,6 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 export function isGoogleConfigured(): boolean {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-}
-
-/**
- * Base URL the browser reaches us at. APP_URL wins (needed behind nginx where
- * the request origin looks like http://127.0.0.1:4000); falls back to the
- * request origin for local dev.
- */
-export function appOrigin(request: NextRequest): string {
-  const fromEnv = process.env.APP_URL?.replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
-  return new URL(request.url).origin;
 }
 
 export function redirectUri(request: NextRequest): string {

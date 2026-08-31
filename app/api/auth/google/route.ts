@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appUrl } from "@/lib/auth/origin";
 import { googleAuthUrl, isGoogleConfigured } from "@/lib/auth/google";
 
 export const runtime = "nodejs";
@@ -6,7 +7,7 @@ export const runtime = "nodejs";
 /** Kick off the Google sign-in flow. */
 export function GET(request: NextRequest) {
   if (!isGoogleConfigured()) {
-    return NextResponse.redirect(new URL("/login?error=config", request.url));
+    return NextResponse.redirect(appUrl(request, "/login?error=config"));
   }
   const state = crypto.randomUUID();
   const res = NextResponse.redirect(googleAuthUrl(request, state));
