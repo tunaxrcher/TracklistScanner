@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jobManager } from "@/lib/server/jobs";
+import { isJobRecord, requireJob } from "@/lib/server/jobAccess";
 
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
   const { jobId } = await params;
-  const record = jobManager.get(jobId);
-  if (!record) return NextResponse.json({ error: "Job not found." }, { status: 404 });
+  const record = await requireJob(request, jobId);
+  if (!isJobRecord(record)) return record;
   return NextResponse.json(record.job);
 }

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { createReadStream, statSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
-import { jobManager } from "@/lib/server/jobs";
+import { isJobRecord, requireJob } from "@/lib/server/jobAccess";
 
 export const runtime = "nodejs";
 
@@ -21,12 +21,14 @@ const MIME: Record<string, string> = {
 
 /** Serve the finished download file. */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
   const { jobId } = await params;
-  const record = jobManager.get(jobId);
-  if (!record?.outputFile || record.job.status !== "completed") {
+  const loaded = await requireJob(request, jobId);
+  if (!isJobRecord(loaded)) return loaded;
+  const record = loaded;
+  if (!record.outputFile || record.job.status !== "completed") {
     return new Response("File not ready.", { status: 404 });
   }
 

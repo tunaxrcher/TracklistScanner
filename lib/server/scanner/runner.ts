@@ -1,6 +1,8 @@
 import { jobManager } from "@/lib/server/jobs";
 import { jobTempDir } from "@/lib/server/paths";
 import { toUserMessage } from "@/lib/errors";
+import { isDbConfigured } from "@/lib/server/db";
+import { saveRecent } from "@/lib/server/recents";
 import type { ScanMode, ScanSettings } from "@/lib/types";
 import type { AudioSource, AudioSourceContext } from "@/lib/server/audio/AudioSource";
 import { LocalFileAudioSource } from "@/lib/server/audio/LocalFileAudioSource";
@@ -32,7 +34,10 @@ export function startScanJob(jobId: string, request: ScanRequest): void {
   void runScan(jobId, request).catch((err) => {
     const record = jobManager.get(jobId);
     if (!record) return;
-    if (record.abort.signal.aborted || record.job.status === "cancelled") return;
+    if (record.abort.signal.aborted || record.job.status === "cancelled") {
+      void persistScanRecent(jobId);
+      return;
+    }
     console.error(`[scan ${jobId}]`, err);
     jobManager.setStatus(jobId, "failed", toUserMessage(err));
   });
@@ -50,6 +55,7 @@ async function runScan(jobId: string, request: ScanRequest): Promise<void> {
   jobManager.update(jobId, (job) => {
     job.scan = {
       mode: request.mode,
+      sourceUrl: request.url,
       fileIndex: 0,
       totalFiles,
       currentTimestamp: 0,
@@ -145,4 +151,24 @@ async function runScan(jobId: string, request: ScanRequest): Promise<void> {
     if (job.scan) job.scan.overallProgress = 100;
   });
   jobManager.setStatus(jobId, "completed");
+  await persistScanRecent(jobId);
+}
+
+/** Write the finished (or stopped) tracklist to the account so a closed tab still has Recent. */
+async function persistScanRecent(jobId: string): Promise<void> {
+  const record = jobManager.get(jobId);
+  const email = record?.ownerEmail;
+  const scan = record?.job.scan;
+  if (!email || !scan || !isDbConfigured()) return;
+  if (scan.mode !== "url" || !scan.sourceUrl || scan.tracks.length === 0) return;
+  try {
+    await saveRecent(email, {
+      url: scan.sourceUrl,
+      title: scan.info?.title,
+      tracks: scan.tracks,
+      kind: "url",
+    });
+  } catch (err) {
+    console.error(`[scan ${jobId}] persist Recent failed:`, err);
+  }
 }

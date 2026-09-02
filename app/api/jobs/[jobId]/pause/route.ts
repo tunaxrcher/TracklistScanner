@@ -11,6 +11,6 @@ export async function POST(
   const { jobId } = await params;
   const record = await requireJob(request, jobId);
   if (!isJobRecord(record)) return record;
-  jobManager.cancel(jobId);
+  jobManager.pause(jobId);
   return NextResponse.json(record.job);
 }

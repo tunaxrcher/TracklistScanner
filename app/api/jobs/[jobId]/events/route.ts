@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { jobManager } from "@/lib/server/jobs";
+import { isJobRecord, requireJob } from "@/lib/server/jobAccess";
 import type { Job } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -13,8 +13,8 @@ export async function GET(
   { params }: { params: Promise<{ jobId: string }> },
 ) {
   const { jobId } = await params;
-  const record = jobManager.get(jobId);
-  if (!record) return new Response("Job not found.", { status: 404 });
+  const record = await requireJob(request, jobId);
+  if (!isJobRecord(record)) return record;
 
   const encoder = new TextEncoder();
 

@@ -12,7 +12,8 @@ export type JobStatus =
   | "processing"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "paused";
 
 export type ScanMode = "url" | "file" | "folder";
 
@@ -71,6 +72,8 @@ export interface MediaInfo {
 
 export interface ScanState {
   mode: ScanMode;
+  /** Original URL for url-scans — used to resume and to save Recent on the server. */
+  sourceUrl?: string;
   currentFile?: string;
   fileIndex: number;
   totalFiles: number;
@@ -167,6 +170,8 @@ export interface TrackPin {
 
 export interface DjPoolTrack {
   id: string;
+  /** TrackEntry.id from the tracklist — used to restore row state after refresh. */
+  clientId?: string;
   /** Search query sent to the pool. */
   query: string;
   title: string;
@@ -185,6 +190,8 @@ export interface DjPoolTrack {
   fileName?: string;
   fileSize?: number;
   error?: string;
+  /** Pinned version — kept so Pause → Continue uses the same file. */
+  pin?: TrackPin;
 }
 
 /** A YouTube search result offered as a downloadable version. */
@@ -208,6 +215,13 @@ export interface DjPoolState {
   /** Name of the final bundle (single file or .zip). */
   bundleName?: string;
   bundleSize?: number;
+  /** Snapshot so Download All can be resumed without the original scan tab. */
+  sourceUrl?: string;
+  sourceTitle?: string;
+  clientTracks?: TrackEntry[];
+  /** Stored so Pause → Continue can keep the same search settings. */
+  preferences?: DjPoolPreferences;
+  sources?: SourcePrefs;
 }
 
 // ---------- Download For DJ (YouTube → DJ-ready file) ----------
@@ -235,6 +249,8 @@ export interface Job {
   status: JobStatus;
   createdAt: number;
   error?: string;
+  /** Signed-in account that started the job (missing on legacy in-memory jobs). */
+  ownerEmail?: string;
   scan?: ScanState;
   djpool?: DjPoolState;
   djdl?: DjDlState;

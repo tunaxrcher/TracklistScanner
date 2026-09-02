@@ -39,6 +39,8 @@ export function youtubeStreamSrc(videoUrl: string): string {
 export function rowStatusFromJob(status: DjPoolTrackStatus): DjRowStatus {
   switch (status) {
     case "pending":
+    case "skipped":
+      return "idle";
     case "searching":
     case "matched":
       return "searching";
@@ -48,8 +50,6 @@ export function rowStatusFromJob(status: DjPoolTrackStatus): DjRowStatus {
       return "done";
     case "notfound":
       return "notfound";
-    case "skipped":
-      return "idle";
     default:
       return "failed";
   }

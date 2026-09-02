@@ -97,6 +97,7 @@ const STATUS_STYLES: Record<JobStatus, { label: string; className: string; spin?
   completed: { label: "Completed", className: "text-success border-success/30" },
   failed: { label: "Failed", className: "text-danger border-danger/30" },
   cancelled: { label: "Stopped", className: "text-muted border-border" },
+  paused: { label: "Paused", className: "text-muted border-border" },
 };
 
 export function StatusBadge({ status }: { status: JobStatus }) {

@@ -1,10 +1,10 @@
 import path from "path";
-import { createWriteStream, statSync } from "fs";
-import { readdir } from "fs/promises";
+import { createWriteStream, existsSync, statSync } from "fs";
+import { copyFile, readdir } from "fs/promises";
 import { ZipArchive } from "archiver";
 import { randomUUID } from "crypto";
 import { jobManager } from "@/lib/server/jobs";
-import { jobDownloadDir, jobTempDir, sanitizeFileName } from "@/lib/server/paths";
+import { DOWNLOADS_ROOT, jobDownloadDir, jobTempDir, sanitizeFileName } from "@/lib/server/paths";
 import { toUserMessage } from "@/lib/errors";
 import { downloadPoolFile, isPoolUrl } from "@/lib/server/djpool/client";
 import { buildQuery, findCandidates } from "@/lib/server/djpool/matcher";
@@ -16,12 +16,15 @@ import {
   type DjPoolPreferences,
   type DjPoolTrack,
   type SourcePrefs,
+  type TrackEntry,
   type TrackPin,
 } from "@/lib/types";
 
 export interface DjPoolTrackInput {
   title: string;
   artist: string;
+  /** TrackEntry.id — restored onto the row after refresh. */
+  id?: string;
   /** 1-based tracklist position, used as the "01 - " filename prefix. */
   num?: number;
   /** Specific version chosen in the picker — downloaded as-is, no search. */
@@ -32,6 +35,11 @@ export interface DjPoolRequest {
   tracks: DjPoolTrackInput[];
   preferences: DjPoolPreferences;
   sources?: SourcePrefs;
+  sourceUrl?: string;
+  sourceTitle?: string;
+  clientTracks?: TrackEntry[];
+  /** Copy already-saved files from a previous (usually cancelled) bundle. */
+  resumeFromJobId?: string;
 }
 
 /** Pacing between pool requests to stay polite to the server. */
@@ -43,17 +51,63 @@ function numPrefix(num?: number): string {
   return num ? `${String(num).padStart(2, "0")} - ` : "";
 }
 
-export function startDjPoolJob(jobId: string, request: DjPoolRequest): void {
-  void runDjPool(jobId, request).catch((err) => {
-    const record = jobManager.get(jobId);
-    if (!record) return;
-    if (record.abort.signal.aborted || record.job.status === "cancelled") return;
-    console.error(`[djpool ${jobId}]`, err);
-    jobManager.setStatus(jobId, "failed", toUserMessage(err));
-  });
+function swallowAbort(jobId: string, err: unknown): void {
+  const record = jobManager.get(jobId);
+  if (!record) return;
+  if (
+    record.abort.signal.aborted ||
+    record.job.status === "cancelled" ||
+    record.job.status === "paused"
+  ) {
+    return;
+  }
+  console.error(`[djpool ${jobId}]`, err);
+  jobManager.setStatus(jobId, "failed", toUserMessage(err));
 }
 
-async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
+export function startDjPoolJob(jobId: string, request: DjPoolRequest): void {
+  void runDjPool(jobId, request).catch((err) => swallowAbort(jobId, err));
+}
+
+/** Continue a paused job from the first track that is not already saved. */
+export function resumeDjPoolJob(jobId: string): boolean {
+  const record = jobManager.get(jobId);
+  if (!record || record.job.type !== "djpool" || record.job.status !== "paused") return false;
+  const snap = record.job.djpool;
+  if (!snap) return false;
+  record.abort = new AbortController();
+  jobManager.setStatus(jobId, "matching");
+  jobManager.update(jobId, (job) => {
+    for (const t of job.djpool?.tracks ?? []) {
+      if (t.status === "searching" || t.status === "downloading" || t.status === "matched") {
+        t.status = "pending";
+        t.progress = undefined;
+      }
+    }
+  });
+  const request: DjPoolRequest = {
+    tracks: snap.tracks.map((t) => ({
+      id: t.clientId,
+      title: t.title,
+      artist: t.artist,
+      num: t.num,
+      pin: t.pin,
+    })),
+    preferences: snap.preferences ?? DEFAULT_DJPOOL_PREFERENCES,
+    sources: snap.sources ?? DEFAULT_SOURCE_PREFS,
+    sourceUrl: snap.sourceUrl,
+    sourceTitle: snap.sourceTitle,
+    clientTracks: snap.clientTracks,
+  };
+  void runDjPool(jobId, request, { resume: true }).catch((err) => swallowAbort(jobId, err));
+  return true;
+}
+
+async function runDjPool(
+  jobId: string,
+  request: DjPoolRequest,
+  opts: { resume?: boolean } = {},
+): Promise<void> {
   const record = jobManager.get(jobId);
   if (!record) return;
   const signal = record.abort.signal;
@@ -64,29 +118,47 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
     sources.priority === "youtube" ? (["youtube", "djpool"] as const) : (["djpool", "youtube"] as const)
   ).filter((s) => sources[s]);
 
-  const tracks: DjPoolTrack[] = request.tracks.map((t) => ({
-    id: randomUUID(),
-    query: buildQuery(t.title, t.artist),
-    title: t.title,
-    artist: t.artist,
-    num: t.num,
-    status: "pending",
-  }));
+  let tracks: DjPoolTrack[];
+  if (opts.resume && record.job.djpool?.tracks.length) {
+    tracks = record.job.djpool.tracks;
+    jobManager.setStatus(jobId, "matching");
+  } else {
+    tracks = request.tracks.map((t) => ({
+      id: randomUUID(),
+      clientId: t.id,
+      query: buildQuery(t.title, t.artist),
+      title: t.title,
+      artist: t.artist,
+      num: t.num,
+      status: "pending",
+      pin: t.pin,
+    }));
 
-  jobManager.update(jobId, (job) => {
-    job.djpool = {
-      total: tracks.length,
-      processed: 0,
-      downloaded: 0,
-      notFound: 0,
-      failed: 0,
-      tracks,
-    };
-  });
-  jobManager.setStatus(jobId, "matching");
+    jobManager.update(jobId, (job) => {
+      job.djpool = {
+        total: tracks.length,
+        processed: 0,
+        downloaded: 0,
+        notFound: 0,
+        failed: 0,
+        tracks,
+        sourceUrl: request.sourceUrl,
+        sourceTitle: request.sourceTitle,
+        clientTracks: request.clientTracks,
+        preferences: prefs,
+        sources,
+      };
+    });
+    jobManager.setStatus(jobId, "matching");
+  }
 
   const outDir = jobDownloadDir(jobId);
   const usedNames = new Set<string>();
+  if (opts.resume) {
+    await seedUsedNames(outDir, usedNames);
+  } else if (request.resumeFromJobId) {
+    await copyResumedFiles(request.resumeFromJobId, outDir, usedNames);
+  }
 
   const patch = (id: string, mutate: (t: DjPoolTrack) => void) =>
     jobManager.update(jobId, (job) => {
@@ -227,13 +299,21 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
 
   for (const [i, track] of tracks.entries()) {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    if (
+      track.status === "downloaded" ||
+      track.status === "notfound" ||
+      track.status === "failed" ||
+      track.status === "skipped"
+    ) {
+      continue;
+    }
 
     patch(track.id, (t) => (t.status = "searching"));
     try {
       let saved = false;
 
       // A pinned version wins over any search; sources are the fallback.
-      const pin = request.tracks[i]?.pin;
+      const pin = track.pin ?? request.tracks[i]?.pin;
       if (pin) {
         try {
           saved = await tryPin(track, pin);
@@ -276,14 +356,14 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
 
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-  const downloaded = record.job.djpool?.downloaded ?? 0;
-  if (downloaded === 0) {
+  // Count every audio file in the folder — includes copies from a previous Stop.
+  const files = (await readdir(outDir)).filter((f) => !f.toLowerCase().endsWith(".zip"));
+  if (files.length === 0) {
     jobManager.setStatus(jobId, "failed", "No tracks could be downloaded from the selected sources.");
     return;
   }
 
   // Bundle: a single file is served directly; multiple files are zipped.
-  const files = (await readdir(outDir)).filter((f) => !f.endsWith(".zip"));
   if (files.length === 1) {
     const only = path.join(outDir, files[0]);
     record.outputFile = only;
@@ -291,11 +371,12 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
       if (job.djpool) {
         job.djpool.bundleName = files[0];
         job.djpool.bundleSize = statSync(only).size;
+        if (files.length > job.djpool.downloaded) job.djpool.downloaded = files.length;
       }
     });
   } else {
     jobManager.setStatus(jobId, "processing");
-    const zipName = `Tracklist - ${downloaded} tracks.zip`;
+    const zipName = `Tracklist - ${files.length} tracks.zip`;
     const zipPath = path.join(outDir, zipName);
     await zipFiles(outDir, files, zipPath);
     record.outputFile = zipPath;
@@ -303,11 +384,53 @@ async function runDjPool(jobId: string, request: DjPoolRequest): Promise<void> {
       if (job.djpool) {
         job.djpool.bundleName = zipName;
         job.djpool.bundleSize = statSync(zipPath).size;
+        if (files.length > job.djpool.downloaded) job.djpool.downloaded = files.length;
       }
     });
   }
 
   jobManager.setStatus(jobId, "completed");
+}
+
+async function seedUsedNames(dir: string, usedNames: Set<string>): Promise<void> {
+  if (!existsSync(dir)) return;
+  const files = (await readdir(dir)).filter((f) => !f.toLowerCase().endsWith(".zip"));
+  for (const f of files) usedNames.add(f.toLowerCase());
+}
+
+function isSafeFileName(name: string): boolean {
+  return name.length > 0 && !name.includes("/") && !name.includes("\\") && !name.includes("..");
+}
+
+/** Bring over files that finished before the previous bundle was Stopped. */
+async function copyResumedFiles(
+  fromJobId: string,
+  toDir: string,
+  usedNames: Set<string>,
+): Promise<number> {
+  const fromDir = path.join(DOWNLOADS_ROOT, fromJobId);
+  if (!existsSync(fromDir)) return 0;
+
+  const names = new Set(
+    (jobManager.get(fromJobId)?.job.djpool?.tracks ?? [])
+      .filter((t) => t.status === "downloaded" && t.fileName && isSafeFileName(t.fileName))
+      .map((t) => t.fileName as string),
+  );
+  if (names.size === 0) return 0;
+
+  let copied = 0;
+  for (const name of names) {
+    const src = path.join(fromDir, name);
+    if (!existsSync(src) || !statSync(src).isFile()) continue;
+    try {
+      await copyFile(src, path.join(toDir, name));
+      usedNames.add(name.toLowerCase());
+      copied += 1;
+    } catch (err) {
+      console.warn(`[djpool] resume copy failed for ${name}:`, err);
+    }
+  }
+  return copied;
 }
 
 function zipFiles(dir: string, files: string[], zipPath: string): Promise<void> {

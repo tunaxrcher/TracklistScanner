@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sessionEmail } from "@/lib/auth/session";
 import { jobManager } from "@/lib/server/jobs";
 import { startDjDlJob } from "@/lib/server/djdl/runner";
 import type { DjDownloadFormat } from "@/lib/types";
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Please paste a full http(s) URL." }, { status: 400 });
   }
 
-  const record = jobManager.create("djdl");
+    const record = jobManager.create("djdl", { owner: await sessionEmail(request) });
   startDjDlJob(record.job.id, { url, format });
   return NextResponse.json({ jobId: record.job.id });
 }

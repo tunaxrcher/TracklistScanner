@@ -24,7 +24,7 @@ export function useJob() {
   const markLost = useCallback(() => {
     disconnect();
     setJob((prev) =>
-      prev && !["completed", "failed", "cancelled"].includes(prev.status)
+      prev && !["completed", "failed", "cancelled", "paused"].includes(prev.status)
         ? { ...prev, status: "cancelled" }
         : prev,
     );
@@ -100,11 +100,30 @@ export function useJob() {
     }
   }, [job, markLost]);
 
+  const pause = useCallback(async () => {
+    if (!job) return;
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/pause`, { method: "POST" });
+      if (res.status === 404) markLost();
+    } catch {
+      // job state will update via SSE anyway
+    }
+  }, [job, markLost]);
+
   const reset = useCallback(() => {
     disconnect();
     setJob(null);
     setError(null);
   }, [disconnect]);
 
-  return { job, starting, error, start, cancel, reset };
+  /** Reconnect to a job that is already running (or finished) on the server. */
+  const attach = useCallback(
+    (jobId: string) => {
+      setError(null);
+      subscribe(jobId);
+    },
+    [subscribe],
+  );
+
+  return { job, starting, error, start, attach, cancel, pause, reset };
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { writeFile, mkdir } from "fs/promises";
+import { sessionEmail } from "@/lib/auth/session";
 import { jobManager } from "@/lib/server/jobs";
 import { jobTempDir } from "@/lib/server/paths";
 import { startScanJob, type ScanRequest } from "@/lib/server/scanner/runner";
@@ -43,9 +44,12 @@ export async function POST(request: NextRequest) {
 
     const scanRequest: ScanRequest = { mode, settings };
 
+    const owner = await sessionEmail(request);
+    const active = owner ? jobManager.findActiveByOwner(owner, "scan") : undefined;
+    if (active) jobManager.cancel(active.job.id);
+
     if (mode === "url") {
-      const url = validateMediaUrl(String(form.get("url") ?? ""));
-      scanRequest.url = url;
+      scanRequest.url = validateMediaUrl(String(form.get("url") ?? ""));
     } else {
       const files = form.getAll("files").filter((f): f is File => f instanceof File);
       const supported = files.filter((f) => isSupportedAudioFile(f.name));
@@ -57,7 +61,7 @@ export async function POST(request: NextRequest) {
       }
       if (mode === "file" && supported.length > 1) supported.length = 1;
 
-      const record = jobManager.create("scan", settings.keepTempFiles);
+      const record = jobManager.create("scan", { keepTemp: settings.keepTempFiles, owner });
       const uploadDir = path.join(jobTempDir(record.job.id), "uploads");
       await mkdir(uploadDir, { recursive: true });
 
@@ -73,7 +77,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ jobId: record.job.id });
     }
 
-    const record = jobManager.create("scan", settings.keepTempFiles);
+    const record = jobManager.create("scan", { keepTemp: settings.keepTempFiles, owner });
     startScanJob(record.job.id, scanRequest);
     return NextResponse.json({ jobId: record.job.id });
   } catch (err) {
