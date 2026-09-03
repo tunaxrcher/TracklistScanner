@@ -71,10 +71,30 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { user: Me | null } | null) => setMe(data?.user ?? null))
-      .catch(() => {});
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // Retry a couple of times: a failed first request (dev server still
+    // compiling, brief network blip) shouldn't leave the header blank.
+    const load = async (attempt = 0) => {
+      try {
+        const res = await fetch("/api/auth/me");
+        if (stopped) return;
+        if (res.ok) {
+          const data = (await res.json()) as { user: Me | null };
+          setMe(data.user ?? null);
+          return;
+        }
+        if (res.status === 401) return;
+        throw new Error(String(res.status));
+      } catch {
+        if (!stopped && attempt < 3) timer = setTimeout(() => load(attempt + 1), 1_500 * (attempt + 1));
+      }
+    };
+    load();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   const missing: string[] = [];

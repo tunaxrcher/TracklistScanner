@@ -63,11 +63,32 @@ function clearLocal(): void {
 
 // ---------- server sync ----------
 
-/** Initial load: server first, localStorage on 503/network failure. */
-async function refresh(): Promise<void> {
+const RETRY_DELAYS_MS = [1_000, 3_000, 8_000];
+
+/**
+ * Initial load: server first, localStorage on 503/network failure.
+ * A "no-db" 503 means the server has no database at all, so we switch to
+ * localStorage for good. Any other failure (DB still connecting, dev server
+ * compiling, network blip) is retried a few times before giving up, so a
+ * slow first request doesn't strand the whole session in local mode.
+ */
+async function refresh(attempt = 0): Promise<void> {
+  const retry = () => {
+    setTimeout(() => void refresh(attempt + 1), RETRY_DELAYS_MS[attempt]);
+  };
   try {
-    const res = await fetch("/api/recents");
-    if (!res.ok) throw new Error(String(res.status));
+    let res: Response;
+    try {
+      res = await fetch("/api/recents");
+    } catch (err) {
+      if (attempt < RETRY_DELAYS_MS.length) return retry();
+      throw err;
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (body?.error !== "no-db" && attempt < RETRY_DELAYS_MS.length) return retry();
+      throw new Error(String(res.status));
+    }
     const data = (await res.json()) as { items: RecentItem[] };
     mode = "db";
     // One-time migration: push pre-DB localStorage history up to the account.
