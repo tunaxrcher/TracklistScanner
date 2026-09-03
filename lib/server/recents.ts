@@ -57,11 +57,20 @@ export async function saveRecent(
 
   // Omitted fields are left untouched on update, so re-scanning a URL
   // refreshes the timestamp without wiping the saved title/tracklist.
-  await db.recent.upsert({
-    where: { userEmail_url: { userEmail: email, url } },
-    create: { userEmail: email, url, kind, title, tracks, updatedAt },
-    update: { kind, updatedAt, ...(title !== undefined && { title }), ...(tracks !== undefined && { tracks }) },
-  });
+  const upsert = () =>
+    db.recent.upsert({
+      where: { userEmail_url: { userEmail: email, url } },
+      create: { userEmail: email, url, kind, title, tracks, updatedAt },
+      update: { kind, updatedAt, ...(title !== undefined && { title }), ...(tracks !== undefined && { tracks }) },
+    });
+  try {
+    await upsert();
+  } catch (err) {
+    // Two saves of the same URL can race (title + tracklist land together);
+    // the loser hits the unique index on create — retry as a plain update.
+    if ((err as { code?: string }).code !== "P2002") throw err;
+    await upsert();
+  }
 
   // Keep only the newest MAX_ITEMS rows per user.
   const overflow = await db.recent.findMany({

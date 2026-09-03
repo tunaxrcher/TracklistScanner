@@ -63,6 +63,11 @@ function sameSource(a?: string | null, b?: string | null): boolean {
   return Boolean(a && b && a.trim() === b.trim());
 }
 
+/** Fire-and-forget: hide a finished job from /api/jobs/mine reconnects. */
+function dismissJob(jobId: string): void {
+  void fetch(`/api/jobs/${jobId}`, { method: "DELETE" }).catch(() => {});
+}
+
 /** Whether the in-memory Download All job belongs to the tracklist on screen. */
 function bundleMatchesView(
   sourceUrl: string | undefined,
@@ -953,6 +958,10 @@ export function TracklistPanel({
   };
 
   const resetAll = () => {
+    // Tell the server we're done with the finished jobs, otherwise a refresh
+    // reconnects to them via /api/jobs/mine and the result comes right back.
+    if (job && !running) dismissJob(job.id);
+    if (djJob.job && !djRunning && !djPaused) dismissJob(djJob.job.id);
     reset();
     clearResults();
     setFiles([]);
@@ -1039,8 +1048,14 @@ export function TracklistPanel({
   // Once a scan ends, save its tracklist so Recent can restore it later.
   // File/folder scans get a `file:` pseudo-key — they can't be re-scanned from
   // Recent (the file lives on the user's disk) but their result can be reopened.
+  // Saved once per job: the deps below change again after completion (DJ Pool
+  // probe, merge rounds, …) and re-saving would resurrect an item the user
+  // just removed with Clear.
+  const savedRecentJobId = useRef<string | null>(null);
   useEffect(() => {
-    if (!done || !scan || sourceTracks.length === 0) return;
+    if (!done || !job || !scan || sourceTracks.length === 0) return;
+    if (savedRecentJobId.current === job.id) return;
+    savedRecentJobId.current = job.id;
     if (scan.mode === "url") {
       if (url) addRecent(url, scan.info?.title, sourceTracks);
     } else {
@@ -1049,7 +1064,7 @@ export function TracklistPanel({
       const name = files.length > 1 ? `${first} +${files.length - 1} more` : first;
       addRecent(`file:${name}`, name, sourceTracks, scan.mode);
     }
-  }, [done, scan, url, files, sourceTracks]);
+  }, [done, job, scan, url, files, sourceTracks]);
 
   /** Scan settings with the chosen preset applied on top of Settings values. */
   const effectiveScanSettings = (): ScanSettings => {

@@ -21,6 +21,8 @@ export interface JobRecord {
   ownerEmail?: string;
   /** Absolute path of the final output file for download jobs */
   outputFile?: string;
+  /** User closed this finished job (New Scan) — don't offer it for reconnect. */
+  dismissed?: boolean;
 }
 
 class JobManager {
@@ -52,10 +54,18 @@ class JobManager {
   findLatestByOwner(email: string, type: JobType): JobRecord | undefined {
     let latest: JobRecord | undefined;
     for (const record of this.records.values()) {
-      if (record.ownerEmail !== email || record.job.type !== type) continue;
+      if (record.ownerEmail !== email || record.job.type !== type || record.dismissed) continue;
       if (!latest || record.job.createdAt > latest.job.createdAt) latest = record;
     }
     return latest;
+  }
+
+  /** Hide a finished job from reconnect (`findLatestByOwner`). Running jobs are left alone. */
+  dismiss(id: string): boolean {
+    const record = this.records.get(id);
+    if (!record || !TERMINAL.has(record.job.status)) return false;
+    record.dismissed = true;
+    return true;
   }
 
   /** Latest paused Download All that can be continued. */
@@ -165,7 +175,7 @@ class JobManager {
 // Survive Next.js dev-server module reloads. Bump the version whenever
 // JobManager gains methods — otherwise HMR keeps a stale instance and
 // new calls throw (Download All then shows "Something went wrong").
-const JOB_MANAGER_VERSION = 3;
+const JOB_MANAGER_VERSION = 4;
 const globalStore = globalThis as unknown as {
   __jobManager?: JobManager;
   __jobManagerVersion?: number;
