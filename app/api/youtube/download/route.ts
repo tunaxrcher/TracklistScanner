@@ -7,7 +7,7 @@ import { searchYoutube } from "@/lib/server/ytdlp";
 import { youtubeToFile } from "@/lib/server/djdl/convert";
 import { buildQuery } from "@/lib/server/djpool/matcher";
 import { TEMP_ROOT } from "@/lib/server/paths";
-import { toUserMessage } from "@/lib/errors";
+import { AppError, toUserMessage } from "@/lib/errors";
 import type { DjDownloadFormat } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
     cleanup();
     if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error("[POST /api/youtube/download]", err);
-    return NextResponse.json({ error: toUserMessage(err) }, { status: 500 });
+    const status = err instanceof AppError && err.code === "INVALID_URL" ? 400 : 500;
+    return NextResponse.json({ error: toUserMessage(err) }, { status });
   }
 }

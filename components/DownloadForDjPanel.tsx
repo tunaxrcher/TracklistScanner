@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import { Disc3, Download, Link2, Loader2, RotateCcw, Square } from "lucide-react";
+import { Disc3, Download, Link2, Loader2, Square } from "lucide-react";
 import { useJob } from "@/lib/client/useJob";
 import { ProgressBar, formatBytes } from "@/components/ui";
 import type { DjDownloadFormat } from "@/lib/types";
@@ -20,7 +20,7 @@ const PHASE_LABEL: Record<string, string> = {
 };
 
 export function DownloadForDjPanel() {
-  const { job, starting, error, start, cancel, reset } = useJob();
+  const { job, starting, error, start, cancel } = useJob();
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<DjDownloadFormat>("wav");
 

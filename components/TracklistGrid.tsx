@@ -212,7 +212,7 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
         <div className="absolute right-0 top-full z-20 mt-1 w-80 overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
           <div className="flex items-center justify-between border-b border-border bg-surface-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
             Choose a version
-            <button type="button" onClick={dj.onClosePicker} className="text-muted hover:text-text">
+            <button type="button" onClick={dj.onClosePicker} aria-label="Close version picker" className="text-muted hover:text-text">
               ✕
             </button>
           </div>

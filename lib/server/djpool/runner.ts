@@ -1,6 +1,6 @@
 import path from "path";
 import { createWriteStream, existsSync, statSync } from "fs";
-import { copyFile, readdir } from "fs/promises";
+import { copyFile, readdir, unlink } from "fs/promises";
 import { ZipArchive } from "archiver";
 import { randomUUID } from "crypto";
 import { jobManager } from "@/lib/server/jobs";
@@ -45,28 +45,59 @@ export interface DjPoolRequest {
 /** Pacing between pool requests to stay polite to the server. */
 const REQUEST_DELAY_MS = 700;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Resolves after `ms`, or as soon as `signal` aborts (the caller re-checks it). */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
 
 function numPrefix(num?: number): string {
   return num ? `${String(num).padStart(2, "0")} - ` : "";
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
+/**
+ * Failure handler for a run. Aborts are expected (Stop / Pause) and must be
+ * identified by the error itself, not by the record: by the time a paused run
+ * unwinds, Continue may already have swapped in a fresh AbortController and
+ * set the status back to "matching".
+ */
 function swallowAbort(jobId: string, err: unknown): void {
+  if (isAbortError(err)) return;
   const record = jobManager.get(jobId);
-  if (!record) return;
-  if (
-    record.abort.signal.aborted ||
-    record.job.status === "cancelled" ||
-    record.job.status === "paused"
-  ) {
-    return;
-  }
+  if (!record || record.job.status === "cancelled" || record.job.status === "paused") return;
   console.error(`[djpool ${jobId}]`, err);
   jobManager.setStatus(jobId, "failed", toUserMessage(err));
 }
 
+/**
+ * Run the worker, chained after any previous worker for this job so a Continue
+ * issued while a paused run is still unwinding never has two workers writing
+ * into the same download dir.
+ */
+function launch(jobId: string, request: DjPoolRequest, opts: { resume?: boolean } = {}): void {
+  const record = jobManager.get(jobId);
+  if (!record) return;
+  const previous = record.runner ?? Promise.resolve();
+  record.runner = previous
+    .catch(() => {})
+    .then(() => runDjPool(jobId, request, opts))
+    .catch((err) => swallowAbort(jobId, err));
+}
+
 export function startDjPoolJob(jobId: string, request: DjPoolRequest): void {
-  void runDjPool(jobId, request).catch((err) => swallowAbort(jobId, err));
+  launch(jobId, request);
 }
 
 /** Continue a paused job from the first track that is not already saved. */
@@ -75,7 +106,7 @@ export function resumeDjPoolJob(jobId: string): boolean {
   if (!record || record.job.type !== "djpool" || record.job.status !== "paused") return false;
   const snap = record.job.djpool;
   if (!snap) return false;
-  record.abort = new AbortController();
+  jobManager.resetAbort(jobId);
   jobManager.setStatus(jobId, "matching");
   jobManager.update(jobId, (job) => {
     for (const t of job.djpool?.tracks ?? []) {
@@ -99,7 +130,7 @@ export function resumeDjPoolJob(jobId: string): boolean {
     sourceTitle: snap.sourceTitle,
     clientTracks: snap.clientTracks,
   };
-  void runDjPool(jobId, request, { resume: true }).catch((err) => swallowAbort(jobId, err));
+  launch(jobId, request, { resume: true });
   return true;
 }
 
@@ -155,7 +186,7 @@ async function runDjPool(
   const outDir = jobDownloadDir(jobId);
   const usedNames = new Set<string>();
   if (opts.resume) {
-    await seedUsedNames(outDir, usedNames);
+    await seedUsedNames(outDir, tracks, usedNames);
   } else if (request.resumeFromJobId) {
     await copyResumedFiles(request.resumeFromJobId, outDir, usedNames);
   }
@@ -351,7 +382,7 @@ async function runDjPool(
       bump("failed");
     }
 
-    await sleep(REQUEST_DELAY_MS);
+    await sleep(REQUEST_DELAY_MS, signal);
   }
 
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -392,10 +423,20 @@ async function runDjPool(
   jobManager.setStatus(jobId, "completed");
 }
 
-async function seedUsedNames(dir: string, usedNames: Set<string>): Promise<void> {
+/**
+ * On resume, the job's own track list is the source of truth for what was
+ * saved. Anything else in the folder is a half-written file from the run that
+ * got paused — drop it so it neither lands in the zip nor steals a name.
+ */
+async function seedUsedNames(dir: string, tracks: DjPoolTrack[], usedNames: Set<string>): Promise<void> {
   if (!existsSync(dir)) return;
-  const files = (await readdir(dir)).filter((f) => !f.toLowerCase().endsWith(".zip"));
-  for (const f of files) usedNames.add(f.toLowerCase());
+  for (const t of tracks) {
+    if (t.status === "downloaded" && t.fileName) usedNames.add(t.fileName.toLowerCase());
+  }
+  for (const f of await readdir(dir)) {
+    if (usedNames.has(f.toLowerCase())) continue;
+    await unlink(path.join(dir, f)).catch((err) => console.warn(`[djpool] stale file cleanup failed for ${f}:`, err));
+  }
 }
 
 function isSafeFileName(name: string): boolean {

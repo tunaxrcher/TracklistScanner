@@ -166,7 +166,13 @@ async function requestFiles(session: Session, query: string, limit: number, offs
   storeCookies(session.cookies, res);
   if (res.status === 401 || res.status === 403) return { error: "unauthorized" };
   try {
-    return (await res.json()) as FilesResponse;
+    const data = (await res.json()) as unknown;
+    // The endpoint sometimes answers with an HTML error page or a bare array
+    // when WordPress is unhappy — never let that reach `.hits.map`.
+    if (!data || typeof data !== "object" || Array.isArray(data)) return { error: "bad_response" };
+    const parsed = data as FilesResponse;
+    if (parsed.hits !== undefined && !Array.isArray(parsed.hits)) return { error: "bad_response" };
+    return parsed;
   } catch {
     return { error: "bad_response" };
   }

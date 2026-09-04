@@ -3,9 +3,12 @@ import { randomUUID } from "crypto";
 import type { ChildProcess } from "child_process";
 import type { Job, JobStatus, JobType } from "@/lib/types";
 import { killTree } from "@/lib/server/proc";
-import { cleanupJobTemp, jobTempDir } from "@/lib/server/paths";
+import { cleanupJobDownloads, cleanupJobTemp, jobTempDir, sweepOrphanedJobDirs } from "@/lib/server/paths";
 
+/** Statuses where no work is running. `paused` can still be resumed. */
 const TERMINAL = new Set<JobStatus>(["completed", "failed", "cancelled", "paused"]);
+/** Statuses where the job is over for good and its temp dir can go. */
+const FINISHED = new Set<JobStatus>(["completed", "failed", "cancelled"]);
 
 export interface JobCreateOptions {
   keepTemp?: boolean;
@@ -23,6 +26,13 @@ export interface JobRecord {
   outputFile?: string;
   /** User closed this finished job (New Scan) — don't offer it for reconnect. */
   dismissed?: boolean;
+  /** Pending temp cleanup, so a resume can call it off. */
+  cleanupTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * The currently running worker for this job. Runners that support resume
+   * chain onto it so two workers never write into the same directory.
+   */
+  runner?: Promise<void>;
 }
 
 class JobManager {
@@ -50,6 +60,11 @@ class JobManager {
     return this.records.get(id);
   }
 
+  /** Ids of every job still held in memory (for the orphan-folder sweep). */
+  knownIds(): ReadonlySet<string> {
+    return new Set(this.records.keys());
+  }
+
   /** Latest job of this type for the account, including finished ones still in memory. */
   findLatestByOwner(email: string, type: JobType): JobRecord | undefined {
     let latest: JobRecord | undefined;
@@ -63,7 +78,7 @@ class JobManager {
   /** Hide a finished job from reconnect (`findLatestByOwner`). Running jobs are left alone. */
   dismiss(id: string): boolean {
     const record = this.records.get(id);
-    if (!record || !TERMINAL.has(record.job.status)) return false;
+    if (!record || !FINISHED.has(record.job.status)) return false;
     record.dismissed = true;
     return true;
   }
@@ -108,7 +123,7 @@ class JobManager {
       job.status = status;
       if (error !== undefined) job.error = error;
     });
-    if (TERMINAL.has(status)) this.finalize(id);
+    if (FINISHED.has(status)) this.finalize(id);
   }
 
   registerProc(id: string, proc: ChildProcess): void {
@@ -149,39 +164,70 @@ class JobManager {
     const record = this.records.get(id);
     if (!record) return false;
     record.abort = new AbortController();
+    if (record.cleanupTimer) {
+      clearTimeout(record.cleanupTimer);
+      record.cleanupTimer = undefined;
+    }
     return true;
   }
 
   private finalize(id: string): void {
     const record = this.records.get(id);
     if (!record) return;
-    if (!record.keepTemp) {
+    if (!record.keepTemp && !record.cleanupTimer) {
       // Small delay so killed child processes release file handles on Windows.
-      setTimeout(() => cleanupJobTemp(id), 1500);
+      // A failed download job has nothing worth keeping; cancelled ones keep
+      // their folder because a later Download All can resume from it.
+      record.cleanupTimer = setTimeout(() => {
+        cleanupJobTemp(id);
+        if (record.job.status === "failed") cleanupJobDownloads(id);
+      }, 1500);
     }
   }
 
-  /** Drop finished jobs older than 2 hours to keep memory bounded. */
-  private gc(): void {
-    const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+  /**
+   * Drop finished jobs older than the retention window to keep memory bounded,
+   * and their download folders with them — without the record nothing can
+   * serve or resume from those files anyway.
+   */
+  gc(): void {
+    const cutoff = Date.now() - JOB_RETENTION_MS;
     for (const [id, record] of this.records) {
       if (TERMINAL.has(record.job.status) && record.job.createdAt < cutoff) {
         this.records.delete(id);
+        cleanupJobTemp(id);
+        cleanupJobDownloads(id);
       }
     }
   }
 }
 
+/** How long finished jobs (and their files) stay available. */
+const JOB_RETENTION_MS = 2 * 60 * 60 * 1000;
+
 // Survive Next.js dev-server module reloads. Bump the version whenever
 // JobManager gains methods — otherwise HMR keeps a stale instance and
 // new calls throw (Download All then shows "Something went wrong").
-const JOB_MANAGER_VERSION = 4;
+const JOB_MANAGER_VERSION = 6;
 const globalStore = globalThis as unknown as {
   __jobManager?: JobManager;
   __jobManagerVersion?: number;
+  __jobGcTimer?: ReturnType<typeof setInterval>;
 };
 if (globalStore.__jobManagerVersion !== JOB_MANAGER_VERSION) {
   globalStore.__jobManager = new JobManager();
   globalStore.__jobManagerVersion = JOB_MANAGER_VERSION;
+  // Folders from a previous process can't be served anymore; retention is
+  // measured from the folder's last write so an in-flight job isn't touched.
+  sweepOrphanedJobDirs(JOB_RETENTION_MS);
+  // Expire finished jobs on a schedule, not only when a new job is created.
+  if (globalStore.__jobGcTimer) clearInterval(globalStore.__jobGcTimer);
+  globalStore.__jobGcTimer = setInterval(() => {
+    const manager = globalStore.__jobManager;
+    if (!manager) return;
+    manager.gc();
+    sweepOrphanedJobDirs(JOB_RETENTION_MS, manager.knownIds());
+  }, 10 * 60 * 1000);
+  globalStore.__jobGcTimer.unref();
 }
 export const jobManager: JobManager = globalStore.__jobManager!;

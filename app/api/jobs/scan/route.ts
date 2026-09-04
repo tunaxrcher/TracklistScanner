@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
-import { writeFile, mkdir } from "fs/promises";
+import { createWriteStream } from "fs";
+import { mkdir } from "fs/promises";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { sessionEmail } from "@/lib/auth/session";
 import { jobManager } from "@/lib/server/jobs";
-import { jobTempDir } from "@/lib/server/paths";
+import { jobTempDir, sanitizeFileName } from "@/lib/server/paths";
 import { startScanJob, type ScanRequest } from "@/lib/server/scanner/runner";
-import { validateMediaUrl, isSupportedAudioFile, sanitizeFileName } from "@/lib/server/validate";
+import { validateMediaUrl, isSupportedAudioFile } from "@/lib/server/validate";
 import { AppError, toUserMessage } from "@/lib/errors";
 import { DEFAULT_SCAN_SETTINGS, type ScanMode, type ScanSettings } from "@/lib/types";
 
 export const runtime = "nodejs";
+
+/** Upload limits for local file/folder scans (a DJ set is ~100-300 MB). */
+const MAX_FILES = 50;
+const MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024;
 
 function parseSettings(raw: string | null): ScanSettings {
   if (!raw) return DEFAULT_SCAN_SETTINGS;
@@ -45,7 +52,8 @@ export async function POST(request: NextRequest) {
     const scanRequest: ScanRequest = { mode, settings };
 
     const owner = await sessionEmail(request);
-    const active = owner ? jobManager.findActiveByOwner(owner, "scan") : undefined;
+    if (!owner) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+    const active = jobManager.findActiveByOwner(owner, "scan");
     if (active) jobManager.cancel(active.job.id);
 
     if (mode === "url") {
@@ -60,17 +68,34 @@ export async function POST(request: NextRequest) {
         );
       }
       if (mode === "file" && supported.length > 1) supported.length = 1;
+      if (supported.length > MAX_FILES) {
+        return NextResponse.json({ error: `Too many files (max ${MAX_FILES} per scan).` }, { status: 413 });
+      }
+      const totalBytes = supported.reduce((sum, f) => sum + f.size, 0);
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        return NextResponse.json({ error: "Upload too large (max 4 GB per scan)." }, { status: 413 });
+      }
 
       const record = jobManager.create("scan", { keepTemp: settings.keepTempFiles, owner });
       const uploadDir = path.join(jobTempDir(record.job.id), "uploads");
       await mkdir(uploadDir, { recursive: true });
 
       const saved: { path: string; name: string }[] = [];
-      for (const file of supported) {
-        const name = sanitizeFileName(file.name);
-        const target = path.join(uploadDir, `${saved.length}-${name}`);
-        await writeFile(target, Buffer.from(await file.arrayBuffer()));
-        saved.push({ path: target, name });
+      try {
+        for (const file of supported) {
+          const name = sanitizeFileName(file.name);
+          const target = path.join(uploadDir, `${saved.length}-${name}`);
+          // Stream to disk — a folder of full-length sets must not be buffered in RAM.
+          await pipeline(
+            Readable.fromWeb(file.stream() as Parameters<typeof Readable.fromWeb>[0]),
+            createWriteStream(target),
+          );
+          saved.push({ path: target, name });
+        }
+      } catch (err) {
+        // Don't leave a queued job (and its temp dir) behind on a broken upload.
+        jobManager.setStatus(record.job.id, "failed", "Upload failed.");
+        throw err;
       }
       scanRequest.files = saved;
       startScanJob(record.job.id, scanRequest);

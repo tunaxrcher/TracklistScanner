@@ -30,7 +30,7 @@ import type {
   YoutubeVersion,
 } from "@/lib/types";
 import type { PinnedVersion } from "@/components/TracklistGrid";
-import { cleanTracklist, formatTimestamp, mergeTracklists } from "@/lib/tracklist";
+import { cleanTracklist, formatTimestamp, mergeTracklists, trackKey } from "@/lib/tracklist";
 import {
   djPoolStreamSrc,
   filenameFromResponse,
@@ -275,14 +275,12 @@ export function TracklistPanel({
   }, [scan?.tracks, restored?.tracks, baseTracks, settings.scan.mergeWindow]);
   const hasTracks = sourceTracks.length > 0;
 
-  // Auto-enable Clean once a scan finishes (adjust-state-during-render):
+  // Auto-enable Clean once a scan finishes:
   // the raw list often carries provider-alias duplicates and one-off blips,
   // so the cleaned view is the better default. Users can still toggle it off.
-  const [wasDone, setWasDone] = useState(false);
-  if (done !== wasDone) {
-    setWasDone(done);
+  useEffect(() => {
     if (done) setCleaned(true);
-  }
+  }, [done]);
 
   const displayTracks: TrackEntry[] = useMemo(
     () => (cleaned ? cleanTracklist(sourceTracks) : sourceTracks),
@@ -676,15 +674,20 @@ export function TracklistPanel({
       void fetch(`/api/jobs/${djJob.job.id}/resume`, { method: "POST" });
       return;
     }
-    const list = downloadableTracks;
+    // After Stop, the server copies the files the cancelled bundle already
+    // saved (resumeFrom) and we only ask for the rows that are still missing.
+    const resumeFrom = resumeFromJobId ?? undefined;
+    const list = resumeFrom ? remainingTracks : downloadableTracks;
     if (list.length === 0) return;
     djJobTrackIds.current = list.map(({ track }) => track.id);
     closePicker();
+    setResumeFromJobId(null);
     void djJob.start(() =>
       fetch("/api/jobs/djpool", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          resumeFrom,
           tracks: list.map(({ track, num }) => {
             const pin = pins[track.id];
             return {
@@ -706,6 +709,8 @@ export function TracklistPanel({
   }, [
     djPaused,
     downloadableTracks,
+    remainingTracks,
+    resumeFromJobId,
     djJob,
     settings.djpool,
     sourcePrefs,
@@ -756,7 +761,7 @@ export function TracklistPanel({
     // Search each distinct song only once, then apply to all its rows.
     const groups = new Map<string, { title: string; artist: string; ids: string[] }>();
     for (const t of tracks) {
-      const key = `${t.title.toLowerCase().trim()}|||${t.artist.toLowerCase().trim()}`;
+      const key = trackKey(t.title, t.artist);
       const g = groups.get(key);
       if (g) g.ids.push(t.id);
       else groups.set(key, { title: t.title, artist: t.artist, ids: [t.id] });
@@ -1079,7 +1084,7 @@ export function TracklistPanel({
       form.set("mode", scanMode);
       form.set("settings", JSON.stringify(effectiveScanSettings()));
       if (scanMode === "url") {
-        form.set("url", url);
+        form.set("url", url.trim());
       } else {
         for (const file of files) form.append("files", file, file.name);
       }

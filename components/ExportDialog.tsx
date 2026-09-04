@@ -10,6 +10,7 @@ import {
   exportTxt,
   type ExportOptions,
 } from "@/lib/tracklist";
+import { saveBlob } from "@/lib/client/djpool";
 
 type ExportFormat = "txt" | "csv" | "json";
 
@@ -39,12 +40,7 @@ export function ExportDialog({
           : exportJson(tracks, options);
     const mime = format === "json" ? "application/json" : format === "csv" ? "text/csv" : "text/plain";
     const blob = new Blob([content], { type: `${mime};charset=utf-8` });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tracklist.${format}`;
-    a.click();
-    URL.revokeObjectURL(url);
+    saveBlob(blob, `tracklist.${format}`);
     onClose();
   };
 

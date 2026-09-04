@@ -57,12 +57,13 @@ export async function recognizeSample(
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       try {
-        const result = await recognizeWithShazam(wavPath);
+        const result = await recognizeWithShazam(wavPath, signal);
         shazamAnswered = true;
         rateLimited = false;
         if (result) return { result, degraded: false };
         break; // confident "no match" — don't burn retries
       } catch (err) {
+        if (signal?.aborted) throw err;
         if (err instanceof AppError && err.code === "SHAZAM_RATE_LIMIT") {
           rateLimited = true;
           if (attempt < maxRetries) {
@@ -81,7 +82,7 @@ export async function recognizeSample(
 
   if (settings.useAcrCloud && isAcrConfigured()) {
     try {
-      const result = await recognizeWithAcrCloud(wavPath);
+      const result = await recognizeWithAcrCloud(wavPath, signal);
       if (result) return { result, degraded: false };
       // ACR saying "no match" is only a full answer when Shazam also had its
       // say. If Shazam was rate-limited, the song may simply be missing from
@@ -89,6 +90,7 @@ export async function recognizeSample(
       // gap-fill pass revisits this region.
       return { result: null, degraded: settings.useShazam && !shazamAnswered };
     } catch (err) {
+      if (signal?.aborted) throw err;
       if (err instanceof AppError && err.code === "ACR_RATE_LIMIT") throw err;
       console.warn("[acrcloud]", err instanceof Error ? err.message : err);
       return { result: null, degraded: true };

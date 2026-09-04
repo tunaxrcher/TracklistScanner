@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { recognizeBytes } from "shazamio-core";
 import { Shazam } from "node-shazam";
 import { AppError } from "@/lib/errors";
-import type { RecognitionResult } from "./types";
+import { withTimeout, type RecognitionResult } from "./types";
 
 const SHAZAM_TIMEOUT_MS = 20_000;
 
@@ -54,7 +54,10 @@ interface ShazamResponse {
  * Throws AppError("SHAZAM_RATE_LIMIT") when Shazam blocks the request
  * (HTTP 429/403 or an HTML body instead of JSON).
  */
-export async function recognizeWithShazam(wavPath: string): Promise<RecognitionResult | null> {
+export async function recognizeWithShazam(
+  wavPath: string,
+  signal?: AbortSignal,
+): Promise<RecognitionResult | null> {
   const signatures = recognizeBytes(readFileSync(wavPath), 0, Number.MAX_SAFE_INTEGER);
   try {
     const sig = signatures[Math.floor(signatures.length / 2)];
@@ -74,9 +77,11 @@ export async function recognizeWithShazam(wavPath: string): Promise<RecognitionR
         method: "POST",
         headers: shazamHeaders(),
         body,
-        signal: AbortSignal.timeout(SHAZAM_TIMEOUT_MS),
+        signal: withTimeout(signal, SHAZAM_TIMEOUT_MS),
       });
     } catch (err) {
+      // A cancelled/paused job must surface as an abort, not as a timeout.
+      if (signal?.aborted) throw err;
       if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
         throw new AppError("SHAZAM_TIMEOUT");
       }

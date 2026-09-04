@@ -48,18 +48,26 @@ export function useJob() {
       };
       source.onerror = () => {
         // If the stream drops, fall back to one status fetch. A 404 means the
-        // job is gone for good; transient network errors are left to the
-        // EventSource auto-reconnect.
+        // job is gone for good; any other failure (network error, non-ok
+        // status) also marks the job lost so the UI doesn't hang.
+        const lost = () => {
+          markLost();
+          setError("Connection to the job was lost.");
+        };
         fetch(`/api/jobs/${jobId}`)
           .then((r) => {
             if (r.status === 404) {
               markLost();
               return null;
             }
-            return r.ok ? (r.json() as Promise<Job>) : null;
+            if (!r.ok) {
+              lost();
+              return null;
+            }
+            return r.json() as Promise<Job>;
           })
           .then((data) => data && setJob(data))
-          .catch(() => {});
+          .catch(lost);
       };
     },
     [disconnect, markLost],

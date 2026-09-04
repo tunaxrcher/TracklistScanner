@@ -33,12 +33,13 @@ function parsePin(raw?: { source?: string; url?: string; name?: string }): Track
 export async function POST(request: NextRequest) {
   try {
     const owner = await sessionEmail(request);
-    const latest = owner ? jobManager.findLatestByOwner(owner, "djpool") : undefined;
+    if (!owner) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+    const latest = jobManager.findLatestByOwner(owner, "djpool");
     if (latest?.job.status === "paused") {
       resumeDjPoolJob(latest.job.id);
       return NextResponse.json({ jobId: latest.job.id, resumed: true });
     }
-    const existing = owner ? jobManager.findActiveByOwner(owner, "djpool") : undefined;
+    const existing = jobManager.findActiveByOwner(owner, "djpool");
     if (existing) {
       return NextResponse.json({ jobId: existing.job.id, resumed: true });
     }
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
     const resumeFromJobId =
       resumeFrom &&
       resumeFrom.job.type === "djpool" &&
-      jobManager.canAccess(resumeFrom, owner ?? null)
+      jobManager.canAccess(resumeFrom, owner)
         ? resumeFrom.job.id
         : undefined;
 
@@ -134,12 +135,6 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error("[POST /api/jobs/djpool]", err);
     const status = err instanceof AppError && err.code === "DJPOOL_NOT_CONFIGURED" ? 400 : 500;
-    const message =
-      err instanceof AppError
-        ? err.message
-        : err instanceof Error && err.message
-          ? err.message
-          : toUserMessage(err);
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: toUserMessage(err) }, { status });
   }
 }

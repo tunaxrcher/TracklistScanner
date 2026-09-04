@@ -79,10 +79,23 @@ export async function verifySessionToken(token: string, secret: string): Promise
   }
 }
 
+export function isGoogleConfigured(): boolean {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+}
+
+/**
+ * Explicit opt-in to run without sign-in (local single-user dev). Everyone
+ * then shares one pseudo-account, so this must never be the default: a
+ * production box that merely forgot its Google credentials would otherwise
+ * expose every user's jobs and history to every visitor.
+ */
+export function isOpenMode(): boolean {
+  return process.env.AUTH_OPEN_MODE === "true" && !isGoogleConfigured();
+}
+
 /**
  * Resolve the signed-in user's email from a request's session cookie.
- * When Google sign-in is not configured the gate runs open, so requests have
- * no session — those map to a shared pseudo-user instead of failing.
+ * In open mode requests have no session and map to a shared pseudo-user.
  */
 export async function sessionEmail(request: {
   cookies: { get(name: string): { value: string } | undefined };
@@ -90,8 +103,7 @@ export async function sessionEmail(request: {
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const session = token ? await verifySessionToken(token, authSecret()) : null;
   if (session) return session.email;
-  const authConfigured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-  return authConfigured ? null : "anonymous@local";
+  return isOpenMode() ? "anonymous@local" : null;
 }
 
 /** Emails allowed to sign in (comma-separated env). Empty = anyone with a Google account. */

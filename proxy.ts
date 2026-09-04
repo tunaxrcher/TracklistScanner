@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { appUrl } from "@/lib/auth/origin";
-import { SESSION_COOKIE, authSecret, verifySessionToken } from "@/lib/auth/session";
+import { SESSION_COOKIE, authSecret, isOpenMode, verifySessionToken } from "@/lib/auth/session";
 
 // Paths reachable without a session.
 const PUBLIC_PREFIXES = ["/api/auth/", "/login"];
@@ -8,11 +8,11 @@ const PUBLIC_PREFIXES = ["/api/auth/", "/login"];
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Without Google credentials there is no way to sign in, so the gate would
-  // lock everyone out — run open until GOOGLE_CLIENT_ID/SECRET are configured.
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-    return NextResponse.next();
-  }
+  // No sign-in at all — only when explicitly asked for (AUTH_OPEN_MODE=true).
+  // Missing Google credentials without that flag fall through to the normal
+  // gate, where /login shows the "not configured" error instead of opening
+  // the whole app to anyone.
+  if (isOpenMode()) return NextResponse.next();
 
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const session = token ? await verifySessionToken(token, authSecret()) : null;

@@ -1,7 +1,7 @@
 import { createHmac } from "crypto";
 import { readFile } from "fs/promises";
 import { AppError } from "@/lib/errors";
-import type { RecognitionResult } from "./types";
+import { withTimeout, type RecognitionResult } from "./types";
 
 const ACR_TIMEOUT_MS = 15_000;
 
@@ -30,7 +30,10 @@ interface AcrResponse {
  * ACRCloud identify API (fallback provider).
  * Docs: https://docs.acrcloud.com/reference/identification-api
  */
-export async function recognizeWithAcrCloud(wavPath: string): Promise<RecognitionResult | null> {
+export async function recognizeWithAcrCloud(
+  wavPath: string,
+  signal?: AbortSignal,
+): Promise<RecognitionResult | null> {
   if (!isAcrConfigured()) throw new AppError("ACR_NOT_CONFIGURED");
 
   const host = process.env.ACR_HOST!;
@@ -56,22 +59,28 @@ export async function recognizeWithAcrCloud(wavPath: string): Promise<Recognitio
     response = await fetch(`https://${host}/v1/identify`, {
       method: "POST",
       body: form,
-      signal: AbortSignal.timeout(ACR_TIMEOUT_MS),
+      signal: withTimeout(signal, ACR_TIMEOUT_MS),
     });
   } catch (err) {
+    if (signal?.aborted) throw err;
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       throw new AppError("ACR_TIMEOUT");
     }
     throw err;
   }
 
-  const data = (await response.json()) as AcrResponse;
+  const data = (await response.json().catch(() => null)) as AcrResponse | null;
+  const code = data?.status?.code;
+  if (!data || typeof code !== "number") {
+    console.warn("[acrcloud] unexpected response shape", response.status);
+    return null;
+  }
 
   // status.code: 0 = found, 1001 = no result, 3003/3015 = quota/rate limits
-  if (data.status.code === 1001) return null;
-  if (data.status.code === 3003 || data.status.code === 3015) throw new AppError("ACR_RATE_LIMIT");
-  if (data.status.code !== 0) {
-    console.warn("[acrcloud]", data.status.code, data.status.msg);
+  if (code === 1001) return null;
+  if (code === 3003 || code === 3015) throw new AppError("ACR_RATE_LIMIT");
+  if (code !== 0) {
+    console.warn("[acrcloud]", code, data.status.msg);
     return null;
   }
 

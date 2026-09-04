@@ -83,6 +83,8 @@ export async function GET(request: NextRequest) {
       "Content-Type": upstream.headers.get("content-type") ?? "audio/webm",
       "Content-Disposition": "inline",
       "Cache-Control": "no-store",
+      // Tell nginx not to buffer: the browser needs bytes as they arrive (seek/preview).
+      "X-Accel-Buffering": "no",
     };
     for (const h of ["content-length", "content-range", "accept-ranges"]) {
       const v = upstream.headers.get(h);

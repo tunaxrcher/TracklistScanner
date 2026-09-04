@@ -47,7 +47,7 @@ ALLOWED_EMAILS=you@gmail.com,friend@gmail.com   # empty = any Google account
 APP_URL=https://your-domain.example             # needed behind a reverse proxy
 ```
 
-Create the OAuth client at [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) (type **Web application**) and add `{APP_URL}/api/auth/callback` as an authorized redirect URI. **While `GOOGLE_CLIENT_ID`/`SECRET` are unset the gate is open** (otherwise nobody could ever sign in), so set them before exposing the app.
+Create the OAuth client at [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) (type **Web application**) and add `{APP_URL}/api/auth/callback` as an authorized redirect URI. Without `GOOGLE_CLIENT_ID`/`SECRET` the app stays locked (the login page shows a "not configured" error). For local single-user development you can set `AUTH_OPEN_MODE=true` to skip sign-in entirely — everyone then shares one account, so never enable it on a server.
 
 The login page has a bottom player bar: drop an MP3 at `public/lobby.mp3` to give it music.
 

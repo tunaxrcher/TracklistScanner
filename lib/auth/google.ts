@@ -1,15 +1,12 @@
 import type { NextRequest } from "next/server";
 import { appOrigin } from "@/lib/auth/origin";
+import { isGoogleConfigured } from "@/lib/auth/session";
 
-export { appOrigin };
+export { appOrigin, isGoogleConfigured };
 
 // Google OAuth 2.0 endpoints (authorization code flow).
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-
-export function isGoogleConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-}
 
 export function redirectUri(request: NextRequest): string {
   return `${appOrigin(request)}/api/auth/callback`;

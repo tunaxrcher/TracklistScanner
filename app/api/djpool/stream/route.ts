@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
       "Content-Type": upstream.headers.get("content-type") ?? "audio/mpeg",
       "Content-Disposition": "inline",
       "Cache-Control": "no-store",
+      // Tell nginx not to buffer: the browser needs bytes as they arrive (seek/preview).
+      "X-Accel-Buffering": "no",
     };
     // Pass range metadata through so the <audio> element can seek freely.
     for (const h of ["content-length", "content-range", "accept-ranges"]) {

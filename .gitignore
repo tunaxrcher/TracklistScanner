@@ -51,3 +51,6 @@ next-env.d.ts
 
 # prisma generated client (rebuilt by `npm install` postinstall)
 /lib/generated/
+
+# legacy file-based history (moved to MySQL) + any local runtime data
+/data/

@@ -62,6 +62,8 @@ export async function POST(request: NextRequest) {
       "Content-Type": contentType,
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
       "Cache-Control": "no-store",
+      // Tell nginx not to buffer: the browser needs bytes as they arrive (seek/preview).
+      "X-Accel-Buffering": "no",
     };
     if (length) headers["Content-Length"] = length;
 

@@ -4,6 +4,7 @@ import type { ChildProcess } from "child_process";
 import { resolveYtDlp } from "@/lib/server/bin";
 import { run } from "@/lib/server/proc";
 import { AppError, classifyYtDlpError } from "@/lib/errors";
+import { validateMediaUrl } from "@/lib/server/validate";
 import type { MediaInfo } from "@/lib/types";
 
 export interface YtDlpContext {
@@ -31,8 +32,13 @@ export interface DownloadProgressEvent {
   statusText?: string;
 }
 
-/** Fetch title / duration / thumbnail without downloading anything. */
-export async function fetchMediaInfo(url: string, ctx: YtDlpContext = {}): Promise<MediaInfo> {
+/**
+ * Fetch title / duration / thumbnail without downloading anything.
+ * Every URL that reaches yt-dlp goes through validateMediaUrl here (and in
+ * fetchAudioForScan) so no route can forget it.
+ */
+export async function fetchMediaInfo(rawUrl: string, ctx: YtDlpContext = {}): Promise<MediaInfo> {
+  const url = validateMediaUrl(rawUrl);
   const ytdlp = resolveYtDlp();
   const { code, stdout, stderr } = await run(
     ytdlp,
@@ -134,11 +140,12 @@ function parseProgressLine(line: string): DownloadProgressEvent | null {
  * user-facing download, and is cleaned up when the job ends.
  */
 export async function fetchAudioForScan(
-  url: string,
+  rawUrl: string,
   outDir: string,
   onProgress: (e: DownloadProgressEvent) => void,
   ctx: YtDlpContext = {},
 ): Promise<string> {
+  const url = validateMediaUrl(rawUrl);
   const ytdlp = resolveYtDlp();
   const args = [
     "--no-playlist",

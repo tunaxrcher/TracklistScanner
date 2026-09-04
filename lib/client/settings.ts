@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import {
   DEFAULT_DJPOOL_PREFERENCES,
   DEFAULT_SCAN_SETTINGS,
@@ -21,7 +21,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 const STORAGE_KEY = "audio-tool-settings-v1";
 const CHANGE_EVENT = "app-settings-changed";
 
-let cache: AppSettings | null = null;
+let cache: AppSettings = DEFAULT_APP_SETTINGS;
+let loaded = false;
 
 function loadSettings(): AppSettings {
   try {
@@ -55,7 +56,7 @@ function subscribe(callback: () => void): () => void {
 }
 
 function getSnapshot(): AppSettings {
-  return (cache ??= loadSettings());
+  return cache;
 }
 
 function getServerSnapshot(): AppSettings {
@@ -64,5 +65,11 @@ function getServerSnapshot(): AppSettings {
 
 export function useSettings(): [AppSettings, (next: AppSettings) => void] {
   const settings = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  useEffect(() => {
+    if (loaded) return;
+    loaded = true;
+    cache = loadSettings();
+    window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
+  }, []);
   return [settings, saveSettings];
 }
