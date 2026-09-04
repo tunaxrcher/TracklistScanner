@@ -670,7 +670,10 @@ export function TracklistPanel({
   const canContinue = Boolean(djPaused && bundleBelongsHere && continueCount > 0);
 
   const downloadAll = useCallback(() => {
-    if (djPaused && djJob.job?.id) {
+    // Continue only applies to the bundle that belongs to the list on screen.
+    // A paused bundle from another tracklist is left to the server, which
+    // cancels it (files kept) when this new one starts.
+    if (canContinue && djJob.job?.id) {
       void fetch(`/api/jobs/${djJob.job.id}/resume`, { method: "POST" });
       return;
     }
@@ -707,7 +710,7 @@ export function TracklistPanel({
       }),
     );
   }, [
-    djPaused,
+    canContinue,
     downloadableTracks,
     remainingTracks,
     resumeFromJobId,
@@ -976,7 +979,9 @@ export function TracklistPanel({
   /** If Download All is still on the server but this tab dropped it, attach again. */
   const reconnectBundleFor = (sourceUrl: string) => {
     if (djRunning || djPaused) return;
-    void fetch("/api/jobs/mine")
+    // Ask for this list's own bundle, not just the account's newest one — a
+    // stopped bundle here must stay resumable after another list started one.
+    void fetch(`/api/jobs/mine?source=${encodeURIComponent(sourceUrl)}`)
       .then((r) => (r.ok ? (r.json() as Promise<{ djpool?: Job | null }>) : null))
       .then((data) => {
         const bundle = data?.djpool;
@@ -1541,9 +1546,18 @@ export function TracklistPanel({
                     type="button"
                     onClick={returnToBundle}
                     className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent-soft/50 px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-accent"
-                    title="Download All is still running on another tracklist"
+                    title={
+                      djRunning
+                        ? "Download All is still running on another tracklist — stop it there before starting one here"
+                        : "A stopped Download All is waiting on another tracklist. Starting one here keeps its saved files; that list can still Continue later."
+                    }
                   >
-                    <Loader2 size={13} className="animate-spin text-accent" /> View download
+                    {djRunning ? (
+                      <Loader2 size={13} className="animate-spin text-accent" />
+                    ) : (
+                      <Square size={12} className="text-accent" />
+                    )}
+                    {djRunning ? "View download" : "Paused elsewhere"}
                   </button>
                 )}
                 {djOnThisList && (

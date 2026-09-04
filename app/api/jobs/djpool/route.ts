@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionEmail } from "@/lib/auth/session";
 import { jobManager } from "@/lib/server/jobs";
-import { resumeDjPoolJob, startDjPoolJob, type DjPoolTrackInput } from "@/lib/server/djpool/runner";
+import { startDjPoolJob, type DjPoolTrackInput } from "@/lib/server/djpool/runner";
 import { isDjPoolConfigured } from "@/lib/server/djpool/client";
 import { AppError, toUserMessage } from "@/lib/errors";
 import {
@@ -34,15 +34,22 @@ export async function POST(request: NextRequest) {
   try {
     const owner = await sessionEmail(request);
     if (!owner) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-    const latest = jobManager.findLatestByOwner(owner, "djpool");
-    if (latest?.job.status === "paused") {
-      resumeDjPoolJob(latest.job.id);
-      return NextResponse.json({ jobId: latest.job.id, resumed: true });
-    }
+
+    // One bundle per account at a time (keeps DJ Pool traffic sequential).
+    // Never silently hand back a different job than the one requested — the
+    // tracklist in this body is what the user clicked Download All on.
     const existing = jobManager.findActiveByOwner(owner, "djpool");
     if (existing) {
-      return NextResponse.json({ jobId: existing.job.id, resumed: true });
+      return NextResponse.json(
+        { error: "Another Download All is still running. Stop it first.", jobId: existing.job.id },
+        { status: 409 },
+      );
     }
+    // A paused bundle for some other list is abandoned by starting a new one.
+    // Cancelling (not deleting) keeps its saved files, so that list can still
+    // Continue later via resumeFrom.
+    const paused = jobManager.findPausedByOwner(owner, "djpool");
+    if (paused) jobManager.cancel(paused.job.id);
 
     const body = (await request.json()) as {
       tracks?: {

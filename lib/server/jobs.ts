@@ -65,11 +65,19 @@ class JobManager {
     return new Set(this.records.keys());
   }
 
-  /** Latest job of this type for the account, including finished ones still in memory. */
-  findLatestByOwner(email: string, type: JobType): JobRecord | undefined {
+  /**
+   * Latest job of this type for the account, including finished ones still in
+   * memory. `match` narrows it further (e.g. the bundle for one tracklist).
+   */
+  findLatestByOwner(
+    email: string,
+    type: JobType,
+    match: (record: JobRecord) => boolean = () => true,
+  ): JobRecord | undefined {
     let latest: JobRecord | undefined;
     for (const record of this.records.values()) {
       if (record.ownerEmail !== email || record.job.type !== type || record.dismissed) continue;
+      if (!match(record)) continue;
       if (!latest || record.job.createdAt > latest.job.createdAt) latest = record;
     }
     return latest;
