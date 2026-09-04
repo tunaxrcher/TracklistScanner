@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useState } from "react";
 import { FileAudio, FolderOpen, Globe, ListMusic, Trash2, X } from "lucide-react";
 import { clearRecent, removeRecent, useRecent, type RecentItem } from "@/lib/client/recent";
 import { youtubeThumb } from "@/lib/client/youtube";
@@ -25,24 +26,66 @@ function relativeTime(at: number): string {
 export function RecentRow({
   onSelect,
   disabled,
+  activeUrl,
 }: {
   onSelect: (item: RecentItem) => void;
   disabled?: boolean;
+  /** Source currently on screen / being scanned — Clear leaves it alone. */
+  activeUrl?: string;
 }) {
   const items = useRecent();
+  const [confirming, setConfirming] = useState(false);
+  console.warn(`[recent-debug] RecentRow render items=${items.length}`);
   if (items.length === 0) return null;
+
+  const keep = activeUrl && items.some((i) => i.url === activeUrl) ? activeUrl : undefined;
+  const clearable = keep ? items.length - 1 : items.length;
 
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="border-b-2 border-accent pb-1 text-sm font-semibold text-accent">Recent</h2>
-        <button
-          type="button"
-          onClick={clearRecent}
-          className="flex items-center gap-1 text-[11px] text-muted transition-colors hover:text-danger"
-        >
-          <Trash2 size={12} /> Clear
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setConfirming((v) => !v)}
+            disabled={clearable === 0}
+            aria-expanded={confirming}
+            className={`flex items-center gap-1 text-[11px] transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-40 ${
+              confirming ? "text-danger" : "text-muted"
+            }`}
+            title={clearable === 0 ? "Only the tracklist on screen is here" : "Remove history (the tracklist on screen stays)"}
+          >
+            <Trash2 size={12} /> Clear
+          </button>
+          {confirming && (
+            <div className="absolute right-0 top-6 z-30 w-60 rounded-xl border border-border bg-surface p-3 shadow-2xl shadow-black/50">
+              <p className="text-xs text-text">
+                Remove {clearable} {clearable === 1 ? "item" : "items"} from Recent?
+              </p>
+              {keep && <p className="mt-1 text-[11px] text-muted">The tracklist on screen stays.</p>}
+              <div className="mt-2.5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirming(false)}
+                  className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-muted transition-colors hover:text-text"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearRecent(keep);
+                    setConfirming(false);
+                  }}
+                  className="rounded-lg bg-danger px-2.5 py-1 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-4 overflow-x-auto pb-2">
@@ -87,14 +130,16 @@ export function RecentRow({
                   {relativeTime(item.at)}
                 </div>
               </button>
-              <button
-                type="button"
-                onClick={() => removeRecent(item.url)}
-                className="absolute right-1.5 top-1.5 hidden rounded-full bg-black/60 p-1 text-white/80 transition-colors hover:text-danger group-hover:block"
-                title="Remove"
-              >
-                <X size={12} />
-              </button>
+              {item.url !== keep && (
+                <button
+                  type="button"
+                  onClick={() => removeRecent(item.url)}
+                  className="absolute right-1.5 top-1.5 hidden rounded-full bg-black/60 p-1 text-white/80 transition-colors hover:text-danger group-hover:block"
+                  title="Remove"
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
           );
         })}

@@ -86,10 +86,12 @@ async function refresh(attempt = 0): Promise<void> {
     }
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      console.warn(`[recent-debug] refresh status=${res.status} attempt=${attempt}`, body);
       if (body?.error !== "no-db" && attempt < RETRY_DELAYS_MS.length) return retry();
       throw new Error(String(res.status));
     }
     const data = (await res.json()) as { items: RecentItem[] };
+    console.warn(`[recent-debug] refresh ok attempt=${attempt} server=${data.items.length} cacheBefore=${cache.length}`);
     mode = "db";
     // One-time migration: push pre-DB localStorage history up to the account.
     const local = loadLocal();
@@ -112,10 +114,12 @@ async function refresh(attempt = 0): Promise<void> {
       // would only leak into the next account. Clear it.
       if (local.length > 0) clearLocal();
     }
-  } catch {
+  } catch (err) {
+    console.warn(`[recent-debug] refresh FAILED attempt=${attempt}`, err);
     mode = "local";
     cache = loadLocal();
   }
+  console.warn(`[recent-debug] refresh done -> cache=${cache.length} mode=${mode}`);
   notify();
 }
 
@@ -129,7 +133,8 @@ function sync(request: () => Promise<Response>): void {
     .then((res) => {
       if (res.status === 503) throw new Error("no-db");
     })
-    .catch(() => {
+    .catch((err) => {
+      console.warn("[recent-debug] sync FAILED -> local mode", err);
       mode = "local";
       persistLocal(cache);
     });
@@ -155,6 +160,7 @@ export function addRecent(
     at: Date.now(),
   };
   cache = [next, ...cache.filter((i) => i.url !== trimmed)].slice(0, MAX_ITEMS);
+  console.warn(`[recent-debug] addRecent ${trimmed.slice(0, 40)} tracks=${tracks?.length ?? "-"} -> cache=${cache.length} mode=${mode}`);
   notify();
   sync(() =>
     fetch("/api/recents", {
@@ -173,10 +179,16 @@ export function removeRecent(url: string): void {
   sync(() => fetch(`/api/recents?url=${encodeURIComponent(url)}`, { method: "DELETE" }));
 }
 
-export function clearRecent(): void {
-  cache = [];
+/**
+ * Wipe history. `keepUrl` is the source currently on screen / being scanned —
+ * that one is not history yet, and a running scan would re-save it on
+ * completion anyway, so removing it would only make it "come back" later.
+ */
+export function clearRecent(keepUrl?: string): void {
+  cache = keepUrl ? cache.filter((i) => i.url === keepUrl) : [];
   notify();
-  sync(() => fetch("/api/recents?all=1", { method: "DELETE" }));
+  const query = keepUrl ? `&keep=${encodeURIComponent(keepUrl)}` : "";
+  sync(() => fetch(`/api/recents?all=1${query}`, { method: "DELETE" }));
 }
 
 // ---------- React binding ----------

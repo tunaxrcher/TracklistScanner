@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/server/db";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import type { TrackEntry } from "@/lib/types";
+import { canonicalMediaUrl } from "@/lib/mediaUrl";
 
 /** Server-side shape matching the client's RecentItem. */
 export interface RecentRecord {
@@ -43,10 +44,12 @@ export async function saveRecent(
   email: string,
   item: { url: string; title?: string; tracks?: TrackEntry[]; kind?: string; at?: number },
 ): Promise<void> {
-  const url = item.url.trim().slice(0, 500);
+  const kind = KINDS.has(item.kind ?? "") ? item.kind! : "url";
+  // Same normalization as the client, so a share link copied twice (different
+  // ?si= each time) updates one row instead of creating a second one.
+  const url = (kind === "url" ? canonicalMediaUrl(item.url) : item.url.trim()).slice(0, 500);
   if (!url) return;
   const db = getDb();
-  const kind = KINDS.has(item.kind ?? "") ? item.kind! : "url";
   const title = item.title?.slice(0, 512);
   const tracks = item.tracks as unknown as Prisma.InputJsonValue | undefined;
   const updatedAt = BigInt(item.at ?? Date.now());
@@ -86,10 +89,17 @@ export async function saveRecent(
 
 export async function deleteRecent(email: string, url: string): Promise<void> {
   const db = getDb();
-  await db.recent.deleteMany({ where: { userEmail: email, url: url.slice(0, 500) } });
+  // Match both the stored key and its canonical form, so rows written before
+  // URL normalization (raw share links) can still be removed from the UI.
+  const keys = [...new Set([url.slice(0, 500), canonicalMediaUrl(url).slice(0, 500)])];
+  await db.recent.deleteMany({ where: { userEmail: email, url: { in: keys } } });
 }
 
-export async function clearRecents(email: string): Promise<void> {
+/** Wipe the account's history, optionally sparing the source currently on screen. */
+export async function clearRecents(email: string, keepUrl?: string): Promise<void> {
   const db = getDb();
-  await db.recent.deleteMany({ where: { userEmail: email } });
+  const keep = keepUrl ? [...new Set([keepUrl, canonicalMediaUrl(keepUrl)])] : [];
+  await db.recent.deleteMany({
+    where: { userEmail: email, ...(keep.length > 0 && { url: { notIn: keep } }) },
+  });
 }

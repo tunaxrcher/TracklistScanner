@@ -44,6 +44,7 @@ import {
 import { addRecent, type RecentItem } from "@/lib/client/recent";
 import { loadSourcePrefs, saveSourcePrefs } from "@/lib/client/sources";
 import { youtubeEmbed } from "@/lib/client/youtube";
+import { canonicalMediaUrl } from "@/lib/mediaUrl";
 import { ProgressBar, Stat, StatusBadge, formatBytes } from "@/components/ui";
 import { TracklistGrid, type DjPoolColumn } from "@/components/TracklistGrid";
 import { RecentRow } from "@/components/RecentRow";
@@ -192,10 +193,14 @@ export function TracklistPanel({
           return;
         }
 
+        // Finished bundles are history: on a cold load they only come back
+        // alongside their own scan. Otherwise (e.g. after New Scan + Clear) an
+        // old tracklist would appear out of nowhere. Opening the Recent item
+        // brings them back via reconnectBundleFor.
+        if (terminal && !(data.scan && sameSource)) return;
+
         // Stopped mid-bundle: keep Saved rows so Continue can skip them.
         if (bundle.status === "cancelled" && (snap.downloaded ?? 0) > 0) {
-          if (data.scan && !sameSource) return;
-          restoreListIfNeeded();
           setDjRows((prev) => {
             const next = { ...prev };
             for (const t of snap.tracks) {
@@ -210,8 +215,9 @@ export function TracklistPanel({
 
         // Failed bundles are leftover — don't bring Redo-style state back.
         if (terminal && bundle.status !== "completed") return;
-        if (terminal && !sameSource && data.scan) return;
 
+        // Running (any list) or completed alongside its own scan: attach so
+        // progress / the Download ZIP button show up.
         const ids = snap.tracks.map((t) => t.clientId).filter((id): id is string => Boolean(id));
         if (ids.length) djJobTrackIds.current = ids;
         restoreListIfNeeded();
@@ -302,6 +308,8 @@ export function TracklistPanel({
       ),
   );
   const djOnThisList = djRunning && bundleBelongsHere && hasTracks;
+  /** A bundle is running for some other tracklist — only one runs per account. */
+  const djBusyElsewhere = djRunning && !bundleBelongsHere;
   const djCompleted = djJob.job?.status === "completed" && bundleBelongsHere;
   const djBundling = djJob.job?.status === "processing";
   const djCurrent = djState?.tracks.find(
@@ -669,14 +677,18 @@ export function TracklistPanel({
     ).length ?? remainingTracks.length;
   const canContinue = Boolean(djPaused && bundleBelongsHere && continueCount > 0);
 
+  /** Resume the paused bundle this tab is attached to, whichever list it belongs to. */
+  const resumeBundle = useCallback(() => {
+    if (djPaused && djJob.job?.id) {
+      void fetch(`/api/jobs/${djJob.job.id}/resume`, { method: "POST" });
+    }
+  }, [djPaused, djJob.job?.id]);
+
   const downloadAll = useCallback(() => {
     // Continue only applies to the bundle that belongs to the list on screen.
     // A paused bundle from another tracklist is left to the server, which
     // cancels it (files kept) when this new one starts.
-    if (canContinue && djJob.job?.id) {
-      void fetch(`/api/jobs/${djJob.job.id}/resume`, { method: "POST" });
-      return;
-    }
+    if (canContinue) return resumeBundle();
     // After Stop, the server copies the files the cancelled bundle already
     // saved (resumeFrom) and we only ask for the rows that are still missing.
     const resumeFrom = resumeFromJobId ?? undefined;
@@ -711,6 +723,7 @@ export function TracklistPanel({
     );
   }, [
     canContinue,
+    resumeBundle,
     downloadableTracks,
     remainingTracks,
     resumeFromJobId,
@@ -989,7 +1002,9 @@ export function TracklistPanel({
         if (!bundle || !snap) return;
         if (!sameSource(snap.sourceUrl, sourceUrl)) return;
         const running = !["completed", "failed", "cancelled"].includes(bundle.status);
-        if (running || bundle.status === "paused") {
+        // Live, paused, or finished with a ZIP: attach so progress / Continue /
+        // Download ZIP are available on this list again.
+        if (running || bundle.status === "paused" || (bundle.status === "completed" && snap.bundleName)) {
           const ids = snap.tracks.map((t) => t.clientId).filter((id): id is string => Boolean(id));
           if (ids.length) djJobTrackIds.current = ids;
           djAttach(bundle.id);
@@ -1083,13 +1098,13 @@ export function TracklistPanel({
     return settings.scan;
   };
 
-  const startScanJob = (scanMode: ScanMode) => {
+  const startScanJob = (scanMode: ScanMode, scanUrl = url) => {
     void start(() => {
       const form = new FormData();
       form.set("mode", scanMode);
       form.set("settings", JSON.stringify(effectiveScanSettings()));
       if (scanMode === "url") {
-        form.set("url", url.trim());
+        form.set("url", scanUrl);
       } else {
         for (const file of files) form.append("files", file, file.name);
       }
@@ -1099,13 +1114,15 @@ export function TracklistPanel({
 
   const pendingScanSource =
     mode === "url"
-      ? url.trim()
+      ? canonicalMediaUrl(url)
       : files[0]
         ? `file:${files.length > 1 ? `${files[0].name} +${files.length - 1} more` : files[0].name}`
         : "";
   const sameAsRunningBundle = Boolean(
     (djRunning || djPaused) && djState && sameSource(djState.sourceUrl, pendingScanSource),
   );
+  /** Scanning now would pause a Download All that is running for another list. */
+  const scanWillPauseBundle = djRunning && !sameAsRunningBundle;
 
   const beginScan = () => {
     // Same mix already downloading — go back to that list instead of
@@ -1117,7 +1134,16 @@ export function TracklistPanel({
     // A different source: don't scan and download at the same time.
     if (djRunning) void djJob.pause();
     clearResults();
-    if (mode === "url") addRecent(url.trim());
+    if (mode === "url") {
+      // One key per video: share links differ by a tracking param (?si=…)
+      // each time they're copied, which would create a new Recent entry
+      // for the same mix. Normalize before it is stored or sent anywhere.
+      const canonical = canonicalMediaUrl(url);
+      setUrl(canonical);
+      addRecent(canonical);
+      startScanJob(mode, canonical);
+      return;
+    }
     startScanJob(mode);
   };
 
@@ -1340,6 +1366,12 @@ export function TracklistPanel({
                   {djPaused ? " Download All is paused — you can continue from there." : ""}
                 </p>
               )}
+              {scanWillPauseBundle && (
+                <p className="text-center text-xs text-amber-300/90">
+                  Download All on “{djState?.sourceTitle || "another tracklist"}” will be paused while
+                  this scan runs — continue it afterwards from the status card.
+                </p>
+              )}
             </div>
 
             {error && (
@@ -1474,7 +1506,13 @@ export function TracklistPanel({
       </section>
 
       {/* ---------- Recent ---------- */}
-      <RecentRow onSelect={onSelectRecent} disabled={running || starting} />
+      <RecentRow
+        onSelect={onSelectRecent}
+        disabled={running || starting}
+        // The scan on screen (live or restored) is the current session, not
+        // history — Clear must leave it, or it "comes back" when the scan saves.
+        activeUrl={restored?.url || (job ? pendingScanSource || undefined : undefined)}
+      />
 
       {/* ---------- Tracklist ---------- */}
       {((job && scan) || restored) && (
@@ -1516,22 +1554,28 @@ export function TracklistPanel({
                   <Settings2 size={13} /> {sourcesLabel}
                 </button>
 
-                {/* Bundle controls */}
-                {!djOnThisList && !djRunning && (
+                {/* Bundle controls. Buttons here act on THIS list only; a
+                    bundle running on another list is surfaced by the floating
+                    status card at the bottom-right, not by the toolbar. */}
+                {!djOnThisList && (
                   <button
                     type="button"
                     onClick={downloadAll}
-                    disabled={!anySourceUsable || downloadableTracks.length === 0}
+                    disabled={djBusyElsewhere || !anySourceUsable || downloadableTracks.length === 0}
                     title={
-                      !anySourceUsable
-                        ? "No usable download source — check Sources"
-                        : downloadableTracks.length === 0
-                          ? "No tracks available on the selected sources"
-                        : canContinue
-                          ? `Resume after Stop — skip ${downloadableTracks.length - remainingTracks.length} already saved, fetch the rest`
-                        : downloadableTracks.length < displayTracks.length
-                          ? `${displayTracks.length - downloadableTracks.length} excluded (unchecked, or not available on the selected sources)`
-                          : undefined
+                      djBusyElsewhere
+                        ? "Download All is still running on another tracklist — wait for it or stop it from the status card"
+                        : !anySourceUsable
+                          ? "No usable download source — check Sources"
+                          : downloadableTracks.length === 0
+                            ? "No tracks available on the selected sources"
+                            : canContinue
+                              ? `Resume after Stop — skip ${downloadableTracks.length - remainingTracks.length} already saved, fetch the rest`
+                              : djPaused && !bundleBelongsHere
+                                ? "Starts a new download for this list. The stopped one on the other tracklist keeps its saved files and can be continued from there later."
+                                : downloadableTracks.length < displayTracks.length
+                                  ? `${displayTracks.length - downloadableTracks.length} excluded (unchecked, or not available on the selected sources)`
+                                  : undefined
                     }
                     className="flex items-center gap-1.5 rounded-lg bg-accent-gradient px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -1539,25 +1583,6 @@ export function TracklistPanel({
                     {canContinue
                       ? `Continue (${continueCount})`
                       : `Download All (${downloadableTracks.length})`}
-                  </button>
-                )}
-                {(djRunning || djPaused) && !bundleBelongsHere && (
-                  <button
-                    type="button"
-                    onClick={returnToBundle}
-                    className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent-soft/50 px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-accent"
-                    title={
-                      djRunning
-                        ? "Download All is still running on another tracklist — stop it there before starting one here"
-                        : "A stopped Download All is waiting on another tracklist. Starting one here keeps its saved files; that list can still Continue later."
-                    }
-                  >
-                    {djRunning ? (
-                      <Loader2 size={13} className="animate-spin text-accent" />
-                    ) : (
-                      <Square size={12} className="text-accent" />
-                    )}
-                    {djRunning ? "View download" : "Paused elsewhere"}
                   </button>
                 )}
                 {djOnThisList && (
@@ -1698,9 +1723,9 @@ export function TracklistPanel({
             />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-text">
-                {djPaused ? "Download All paused" : "Download All is still running"}
+                {djPaused ? "Download stopped on another tracklist" : "Downloading another tracklist"}
               </p>
-              <p className="mt-0.5 truncate text-xs text-muted">
+              <p className="mt-0.5 truncate text-xs text-muted" title={djState.sourceTitle || djState.sourceUrl}>
                 {djState.sourceTitle || djState.sourceUrl || "Tracklist"}
               </p>
               <p className="mt-1 font-mono text-[11px] text-muted">
@@ -1737,7 +1762,7 @@ export function TracklistPanel({
                 {djPaused && (
                   <button
                     type="button"
-                    onClick={downloadAll}
+                    onClick={resumeBundle}
                     className="rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-text transition-colors hover:border-accent"
                   >
                     Continue

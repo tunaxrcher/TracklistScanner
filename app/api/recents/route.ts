@@ -55,14 +55,15 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** ?url=… removes one item; ?all=1 clears the list. */
+/** ?url=… removes one item; ?all=1 clears the list (?keep=… spares the active source). */
 export async function DELETE(request: NextRequest) {
   if (!isDbConfigured()) return NO_DB;
   const user = await requireUser(request);
   if (user instanceof NextResponse) return user;
   try {
-    const url = request.nextUrl.searchParams.get("url");
-    if (request.nextUrl.searchParams.get("all") === "1") await clearRecents(user);
+    const params = request.nextUrl.searchParams;
+    const url = params.get("url");
+    if (params.get("all") === "1") await clearRecents(user, params.get("keep") ?? undefined);
     else if (url) await deleteRecent(user, url);
     return NextResponse.json({ ok: true });
   } catch (err) {
