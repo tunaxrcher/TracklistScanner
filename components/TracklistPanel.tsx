@@ -686,12 +686,9 @@ export function TracklistPanel({
               }
             : p,
         );
-      } catch (err) {
-        setPicker((p) =>
-          p.trackId === track.id
-            ? { ...p, error: (err as Error).message, more: { available: false, loading: false } }
-            : p,
-        );
+      } catch {
+        // Keep the first page on screen and let the button be tried again.
+        setPicker((p) => (p.trackId === track.id ? { ...p, more: { available: true, loading: false } } : p));
       }
     },
     [searchPool],
@@ -1289,7 +1286,9 @@ export function TracklistPanel({
     startScanJob(resultMode);
   };
 
-  const canStart = isLinkMode(mode) ? url.trim().length > 0 : files.length > 0;
+  const canStart = isLinkMode(mode)
+    ? url.trim().length > 0 && (mode === "spotify") === isSpotifyUrl(url)
+    : files.length > 0;
 
   // Local audio preview for single-file scans.
   const fileUrl = useMemo(() => (files[0] ? URL.createObjectURL(files[0]) : null), [files]);
@@ -1365,6 +1364,18 @@ export function TracklistPanel({
                     className="w-full bg-transparent py-2.5 text-sm text-text outline-none placeholder:text-muted/60"
                   />
                 </div>
+                {/* Wrong tab for this link — say so before yt-dlp fails on it. */}
+                {!spotify && isSpotifyUrl(url) && (
+                  <p className="mt-2 text-xs text-amber-300/90">
+                    This is a Spotify link — use the <span className="font-semibold">Scan for Spotify (URL)</span> tab
+                    to read its tracklist.
+                  </p>
+                )}
+                {spotify && url.trim() && !isSpotifyUrl(url) && (
+                  <p className="mt-2 text-xs text-amber-300/90">
+                    Not a Spotify link. Paste an open.spotify.com playlist, album or track URL.
+                  </p>
+                )}
               </div>
             )}
 

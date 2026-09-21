@@ -178,7 +178,8 @@ async function runSpotifyScan(jobId: string, url: string, signal: AbortSignal): 
       overallProgress: 0,
       songsFound: 0,
       tracks: [],
-      info: { title: "Reading Spotify tracklist…" },
+      // No placeholder title here: the client mirrors info.title into Recent
+      // as soon as it appears, and a failed read must not leave junk behind.
     };
   });
   jobManager.setStatus(jobId, "preparing");
