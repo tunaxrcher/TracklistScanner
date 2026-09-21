@@ -48,7 +48,7 @@ import { addRecent, type RecentItem } from "@/lib/client/recent";
 import { loadSourcePrefs, saveSourcePrefs } from "@/lib/client/sources";
 import { youtubeEmbed } from "@/lib/client/youtube";
 import { canonicalMediaUrl } from "@/lib/mediaUrl";
-import { isSpotifyUrl, spotifyEmbedUrl } from "@/lib/spotify";
+import { isSpotifyUrl, parseSpotifyUrl, spotifyEmbedUrl } from "@/lib/spotify";
 import { ProgressBar, Stat, StatusBadge, formatBytes } from "@/components/ui";
 import { TracklistGrid, type DjPoolColumn } from "@/components/TracklistGrid";
 import { RecentRow } from "@/components/RecentRow";
@@ -1300,22 +1300,48 @@ export function TracklistPanel({
 
   const embedUrl = job && scan?.mode === "url" ? youtubeEmbed(url) : null;
   const spotifyEmbed = job && scan?.mode === "spotify" ? spotifyEmbedUrl(url) : null;
+  /** Parsed Spotify link (null while the field is empty / not a Spotify URL). */
+  const spotifyRef = spotify ? parseSpotifyUrl(url) : null;
 
   return (
     <div className={`space-y-8 ${nowPlaying ? "pb-24" : ""}`}>
       {/* ---------- Scan section ---------- */}
-      <section className="mx-auto max-w-3xl rounded-2xl border border-border bg-surface/50 p-5 lg:p-7">
+      <section
+        className={`mx-auto max-w-3xl rounded-2xl border bg-surface/50 p-5 lg:p-7 ${
+          spotify ? "border-emerald-400/15" : "border-border"
+        }`}
+      >
         {!job ? (
           <div className="space-y-6">
             {spotify ? (
-              <div className="flex items-start gap-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200">
-                <AudioLines size={16} className="mt-0.5 shrink-0" />
-                <div>
-                  <div className="font-semibold">Scan for Spotify (URL)</div>
-                  <div className="mt-0.5 text-xs leading-relaxed text-emerald-200/80">
-                    Paste a playlist, album or track link. The song list comes straight from Spotify — no audio
-                    recognition needed — and then works exactly like a scanned tracklist (DJ Pool / YouTube search,
-                    Get, Download All).
+              // Spotify hero: brand-green badge + the three link types, the
+              // matching one lighting up as soon as a valid link is pasted.
+              <div className="relative overflow-hidden rounded-2xl border border-emerald-400/20 bg-gradient-to-br from-emerald-500/15 via-surface to-surface p-5">
+                <div className="pointer-events-none absolute -right-12 -top-12 h-44 w-44 rounded-full bg-emerald-400/15 blur-3xl" />
+                <div className="pointer-events-none absolute -bottom-16 left-1/3 h-40 w-40 rounded-full bg-emerald-300/10 blur-3xl" />
+                <div className="relative flex items-center gap-4">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#1DB954] text-black shadow-lg shadow-emerald-500/30">
+                    <AudioLines size={26} strokeWidth={2.25} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-lg font-semibold tracking-tight">Spotify</div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {(["playlist", "album", "track"] as const).map((type) => {
+                        const active = spotifyRef?.type === type;
+                        return (
+                          <span
+                            key={type}
+                            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium capitalize transition-colors ${
+                              active
+                                ? "border-emerald-400/60 bg-emerald-400/20 text-emerald-200"
+                                : "border-border bg-surface/60 text-muted"
+                            }`}
+                          >
+                            {type}
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1352,15 +1378,23 @@ export function TracklistPanel({
             {isLinkMode(mode) && (
               <div>
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  {spotify ? "Spotify URL" : "URL"}
+                  {spotify ? "Spotify link" : "URL"}
                 </label>
-                <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-1 focus-within:border-accent">
-                  <Link2 size={16} className="shrink-0 text-muted" />
+                <div
+                  className={`flex items-center gap-2 rounded-xl border bg-surface px-4 py-1 transition-colors ${
+                    spotify
+                      ? spotifyRef
+                        ? "border-emerald-400/60"
+                        : "border-border focus-within:border-emerald-400/60"
+                      : "border-border focus-within:border-accent"
+                  }`}
+                >
+                  <Link2 size={16} className={`shrink-0 ${spotify && spotifyRef ? "text-emerald-300" : "text-muted"}`} />
                   <input
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && canStart && beginScan()}
-                    placeholder={spotify ? "Paste Spotify playlist / album / track link" : "Paste YouTube URL"}
+                    placeholder={spotify ? "https://open.spotify.com/playlist/…" : "Paste YouTube URL"}
                     className="w-full bg-transparent py-2.5 text-sm text-text outline-none placeholder:text-muted/60"
                   />
                 </div>
@@ -1498,9 +1532,13 @@ export function TracklistPanel({
                 type="button"
                 onClick={beginScan}
                 disabled={!canStart || starting}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent-gradient px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 ${
+                  spotify && !sameAsRunningBundle
+                    ? "bg-[#1DB954] text-black shadow-lg shadow-emerald-500/20"
+                    : "bg-accent-gradient text-white"
+                }`}
               >
-                {sameAsRunningBundle ? <DownloadCloud size={16} /> : <ScanLine size={16} />}
+                {sameAsRunningBundle ? <DownloadCloud size={16} /> : spotify ? <AudioLines size={16} /> : <ScanLine size={16} />}
                 {starting
                   ? "Starting…"
                   : sameAsRunningBundle
