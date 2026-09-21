@@ -3,7 +3,8 @@ import { jobTempDir } from "@/lib/server/paths";
 import { toUserMessage } from "@/lib/errors";
 import { isDbConfigured } from "@/lib/server/db";
 import { saveRecent } from "@/lib/server/recents";
-import type { ScanMode, ScanSettings } from "@/lib/types";
+import { fetchSpotifyTracklist } from "@/lib/server/spotify";
+import type { ScanMode, ScanSettings, TrackEntry } from "@/lib/types";
 import type { AudioSource, AudioSourceContext } from "@/lib/server/audio/AudioSource";
 import { LocalFileAudioSource } from "@/lib/server/audio/LocalFileAudioSource";
 import { YouTubeAudioSource } from "@/lib/server/audio/YouTubeAudioSource";
@@ -48,6 +49,8 @@ async function runScan(jobId: string, request: ScanRequest): Promise<void> {
   if (!record) return;
   const { settings } = request;
   const signal = record.abort.signal;
+
+  if (request.mode === "spotify") return runSpotifyScan(jobId, request.url!, signal);
 
   const sources = buildSources(jobId, request);
   const totalFiles = sources.length;
@@ -154,19 +157,85 @@ async function runScan(jobId: string, request: ScanRequest): Promise<void> {
   await persistScanRecent(jobId);
 }
 
+/**
+ * Spotify links already carry the tracklist, so there is nothing to sample:
+ * read the list, lay the songs out back-to-back (timestamp = where it would
+ * start if the playlist were one long mix) and report them like a scan.
+ */
+async function runSpotifyScan(jobId: string, url: string, signal: AbortSignal): Promise<void> {
+  jobManager.update(jobId, (job) => {
+    job.scan = {
+      mode: "spotify",
+      sourceUrl: url,
+      fileIndex: 0,
+      totalFiles: 1,
+      currentTimestamp: 0,
+      totalDuration: 0,
+      samplesScanned: 0,
+      totalSamples: 0,
+      samplesFailed: 0,
+      fileProgress: 0,
+      overallProgress: 0,
+      songsFound: 0,
+      tracks: [],
+      info: { title: "Reading Spotify tracklist…" },
+    };
+  });
+  jobManager.setStatus(jobId, "preparing");
+
+  const list = await fetchSpotifyTracklist(url, signal);
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  console.log(`[scan ${jobId}] spotify ${list.ref.type} "${list.title}": ${list.tracks.length} tracks${list.truncated ? " (first page only)" : ""}`);
+
+  let position = 0;
+  const tracks: TrackEntry[] = list.tracks.map((t, i) => {
+    const seconds = Math.max(1, Math.round(t.durationMs / 1000));
+    const entry: TrackEntry = {
+      id: `${jobId}-${i}`,
+      timestamp: position,
+      lastSeen: position + seconds - 1,
+      title: t.title,
+      artist: t.artist,
+      coverUrl: t.coverUrl,
+      provider: "spotify",
+      file: list.title,
+      fileIndex: 0,
+    };
+    position += seconds;
+    return entry;
+  });
+
+  jobManager.update(jobId, (job) => {
+    if (!job.scan) return;
+    job.scan.tracks = tracks;
+    job.scan.songsFound = tracks.length;
+    job.scan.totalDuration = position;
+    job.scan.currentTimestamp = position;
+    job.scan.fileProgress = 100;
+    job.scan.overallProgress = 100;
+    job.scan.info = {
+      title: list.truncated ? `${list.title} (first ${tracks.length} tracks)` : list.title,
+      thumbnail: list.coverUrl,
+      duration: position,
+    };
+  });
+  jobManager.setStatus(jobId, "completed");
+  await persistScanRecent(jobId);
+}
+
 /** Write the finished (or stopped) tracklist to the account so a closed tab still has Recent. */
 async function persistScanRecent(jobId: string): Promise<void> {
   const record = jobManager.get(jobId);
   const email = record?.ownerEmail;
   const scan = record?.job.scan;
   if (!email || !scan || !isDbConfigured()) return;
-  if (scan.mode !== "url" || !scan.sourceUrl || scan.tracks.length === 0) return;
+  if ((scan.mode !== "url" && scan.mode !== "spotify") || !scan.sourceUrl || scan.tracks.length === 0) return;
   try {
     await saveRecent(email, {
       url: scan.sourceUrl,
       title: scan.info?.title,
       tracks: scan.tracks,
-      kind: "url",
+      kind: scan.mode,
     });
   } catch (err) {
     console.error(`[scan ${jobId}] persist Recent failed:`, err);

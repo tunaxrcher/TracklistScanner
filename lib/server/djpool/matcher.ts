@@ -137,10 +137,17 @@ export function scoreCandidate(
 
   const f = flags(file.name);
   const titleWantsRemix = /remix|rework|flip|bootleg|mashup|refix/i.test(title);
+  const mode = prefs.rankingMode ?? "default";
 
-  // Version preference (clean/dirty).
-  if (prefs.versionPreference === "clean") {
-    if (f.clean) { score += 18; reasons.push("clean"); }
+  // Ranking modes override the plain clean/dirty preference.
+  if (mode === "introDirty") {
+    // "(Intro Dirty)" style DJ edits first, then any dirty, then any intro.
+    if (f.intro && f.dirty) { score += 40; reasons.push("intro dirty"); }
+    else if (f.dirty) { score += 22; reasons.push("dirty"); }
+    else if (f.intro) { score += 16; reasons.push("intro"); }
+    else if (f.clean) { score -= 12; }
+  } else if (mode === "clean" || prefs.versionPreference === "clean") {
+    if (f.clean) { score += mode === "clean" ? 30 : 18; reasons.push("clean"); }
     else if (f.dirty) { score -= 12; }
   } else if (prefs.versionPreference === "dirty") {
     if (f.dirty) { score += 18; reasons.push("dirty"); }
@@ -153,7 +160,8 @@ export function scoreCandidate(
 
   if (prefs.avoidAcapella && f.acapella) { score -= 60; reasons.push("acapella"); }
   if (prefs.avoidInstrumental && f.instrumental) { score -= 60; reasons.push("instrumental"); }
-  if (prefs.avoidIntroOutro && (f.intro || f.outro)) { score -= 22; reasons.push("intro/outro"); }
+  // Intro edits are the point of introDirty mode — never penalize them there.
+  if (prefs.avoidIntroOutro && mode !== "introDirty" && (f.intro || f.outro)) { score -= 22; reasons.push("intro/outro"); }
   if (f.transition) { score -= 50; reasons.push("transition"); }
   if (f.shortEdit) { score -= 15; reasons.push("short edit"); }
   if (f.karaoke) { score -= 60; reasons.push("karaoke"); }
@@ -163,7 +171,10 @@ export function scoreCandidate(
   if (f.remix && titleWantsRemix) { score += 10; reasons.push("remix wanted"); }
 
   // Prefer the plain, untagged full version (only clean/dirty tags present).
-  if (!f.acapella && !f.instrumental && !f.intro && !f.outro && !f.transition && !f.remix && !f.shortEdit && !f.karaoke && !f.spedSlowed) {
+  // In introDirty mode the intro edit *is* the wanted version, so an intro
+  // tag alone does not disqualify a file from the "full" bonus.
+  const plain = mode === "introDirty" ? !f.outro : !f.intro && !f.outro;
+  if (plain && !f.acapella && !f.instrumental && !f.transition && !f.remix && !f.shortEdit && !f.karaoke && !f.spedSlowed) {
     score += 8;
     reasons.push("full");
   }
@@ -185,16 +196,21 @@ export function rankCandidates(
   files: PoolFile[],
   prefs: DjPoolPreferences,
   keep = 6,
-): { candidates: DjPoolCandidate[]; matched: boolean } {
+): RankedCandidates {
+  const poolOrder = prefs.rankingMode === "pool";
   const scored = files
     .map((file) => {
       const { score, reasons } = scoreCandidate(title, artist, file, prefs);
       const cov = coverage(title, artist, file.name);
       return { file, score, reasons, strong: isStrongMatch(cov), combined: cov.combined };
     })
-    // Drop candidates that clearly are not the same song.
-    .filter((c) => c.combined >= 0.5)
-    .sort((a, b) => Number(b.strong) - Number(a.strong) || b.score - a.score);
+    // Drop candidates that clearly are not the same song. "pool" mode shows
+    // the search results exactly as the pool lists them, junk included.
+    .filter((c) => poolOrder || c.combined >= 0.5);
+  // Strong matches come first so candidates[0] is safe to auto-download.
+  // "pool" mode keeps the pool's own order untouched instead — Get / Download
+  // All then only auto-pick when the pool's first hit is the same song.
+  if (!poolOrder) scored.sort((a, b) => Number(b.strong) - Number(a.strong) || b.score - a.score);
 
   const candidates: DjPoolCandidate[] = scored.slice(0, keep).map((c) => ({
     name: c.file.name,
@@ -207,7 +223,19 @@ export function rankCandidates(
     reasons: c.reasons,
   }));
 
-  return { candidates, matched: scored.length > 0 && scored[0].strong };
+  return { candidates, matched: scored.length > 0 && scored[0].strong, total: scored.length };
+}
+
+export interface RankedCandidates {
+  candidates: DjPoolCandidate[];
+  matched: boolean;
+  /** Usable candidates before the `keep` cut — lets the UI offer "Show more". */
+  total: number;
+}
+
+/** How many raw hits to pull from the pool for a given number of kept candidates. */
+export function poolFetchLimit(keep: number): number {
+  return keep > 12 ? 100 : 40;
 }
 
 /**
@@ -225,19 +253,37 @@ export async function findCandidates(
   artist: string,
   prefs: DjPoolPreferences,
   keep = 6,
-): Promise<{ query: string; candidates: DjPoolCandidate[]; matched: boolean }> {
+): Promise<RankedCandidates & { query: string }> {
   const primary = buildQuery(title, artist);
-  let ranked: { candidates: DjPoolCandidate[]; matched: boolean } = { candidates: [], matched: false };
+  const fetchLimit = poolFetchLimit(keep);
+  let ranked: RankedCandidates = { candidates: [], matched: false, total: 0 };
   if (primary) {
-    const files = await searchPoolFiles(primary, 40, 0);
+    const files = await searchPoolFiles(primary, fetchLimit, 0);
     ranked = rankCandidates(title, artist, files, prefs, keep);
+    logSearch("artist+title", primary, files.length, ranked, prefs);
   }
 
   const titleOnly = buildQuery(title, "");
   if (ranked.candidates.length === 0 && titleOnly && titleOnly !== primary) {
-    const files = await searchPoolFiles(titleOnly, 40, 0);
+    const files = await searchPoolFiles(titleOnly, fetchLimit, 0);
     ranked = rankCandidates(title, artist, files, prefs, keep);
+    logSearch("title-only", titleOnly, files.length, ranked, prefs);
   }
 
   return { query: primary || titleOnly, ...ranked };
+}
+
+/** One line per pool query so the server log shows exactly what was searched and what won. */
+export function logSearch(
+  pass: string,
+  query: string,
+  hits: number,
+  ranked: RankedCandidates,
+  prefs: DjPoolPreferences,
+): void {
+  const top = ranked.candidates[0];
+  console.log(
+    `[djpool search] ${pass} q="${query}" mode=${prefs.rankingMode ?? "default"} hits=${hits} usable=${ranked.total} shown=${ranked.candidates.length} matched=${ranked.matched}` +
+      (top ? ` top="${top.name}" (${top.score})` : ""),
+  );
 }

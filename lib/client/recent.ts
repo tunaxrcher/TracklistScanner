@@ -11,8 +11,10 @@ export interface RecentItem {
   /** Tracklist saved from the last completed scan of this source. */
   tracks?: TrackEntry[];
   /** Local file/folder scans can only restore their saved tracklist. */
-  kind?: "url" | "file" | "folder";
+  kind?: RecentKind;
 }
+
+export type RecentKind = "url" | "file" | "folder" | "spotify";
 
 /**
  * Recent history store. Primary backend is the server (per Google account,
@@ -147,7 +149,7 @@ export function addRecent(
   url: string,
   title?: string,
   tracks?: TrackEntry[],
-  kind: "url" | "file" | "folder" = "url",
+  kind: RecentKind = "url",
 ): void {
   const trimmed = url.trim();
   if (!trimmed) return;

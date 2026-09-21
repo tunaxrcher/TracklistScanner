@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDownWideNarrow,
+  AudioLines,
   ChevronDown,
   DownloadCloud,
   FileArchive,
@@ -19,9 +21,10 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useJob } from "@/lib/client/useJob";
-import type { AppSettings } from "@/lib/client/settings";
+import { saveSettings, type AppSettings } from "@/lib/client/settings";
 import type {
   DjPoolCandidate,
+  DjPoolRankingMode,
   Job,
   ScanMode,
   ScanSettings,
@@ -45,6 +48,7 @@ import { addRecent, type RecentItem } from "@/lib/client/recent";
 import { loadSourcePrefs, saveSourcePrefs } from "@/lib/client/sources";
 import { youtubeEmbed } from "@/lib/client/youtube";
 import { canonicalMediaUrl } from "@/lib/mediaUrl";
+import { isSpotifyUrl, spotifyEmbedUrl } from "@/lib/spotify";
 import { ProgressBar, Stat, StatusBadge, formatBytes } from "@/components/ui";
 import { TracklistGrid, type DjPoolColumn } from "@/components/TracklistGrid";
 import { RecentRow } from "@/components/RecentRow";
@@ -52,7 +56,7 @@ import { PlayerBar, type NowPlaying } from "@/components/PlayerBar";
 import { ExportDialog } from "@/components/ExportDialog";
 import { SourceDialog } from "@/components/SourceDialog";
 
-const AUDIO_EXTENSIONS = [".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".webm"];
+const AUDIO_EXTENSIONS = [".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".webm", ".mp4"];
 const ACCEPT = AUDIO_EXTENSIONS.join(",");
 
 function isAudioFile(name: string): boolean {
@@ -90,6 +94,17 @@ const SOURCES: { id: ScanMode; name: string; description: string; icon: React.Re
   { id: "folder", name: "Folder", description: "Scan many audio files", icon: <FolderOpen size={20} /> },
 ];
 
+const RANKING_MODES: { id: DjPoolRankingMode; label: string; hint: string }[] = [
+  { id: "default", label: "Default", hint: "Same song first, then version tags decide" },
+  { id: "pool", label: "DJ Pool sort", hint: "Exactly the order DJ Pool's own search returns (auto-pick only when the first hit is the same song)" },
+  { id: "introDirty", label: "Intro Dirty first", hint: "(Intro Dirty) edits first, then Dirty, then Intro" },
+  { id: "clean", label: "Clean first", hint: "Clean versions first" },
+];
+
+/** Version picker page sizes — must match /api/djpool/search (DEFAULT_LIMIT / MAX_LIMIT). */
+const PICKER_PAGE = 12;
+const PICKER_PAGE_MAX = 60;
+
 type ScanPreset = "fast" | "thorough" | "custom";
 
 const PRESETS: { id: ScanPreset; name: string; description: string }[] = [
@@ -116,16 +131,29 @@ async function collectFromDirectory(handle: FileSystemDirectoryHandle): Promise<
   return files;
 }
 
+/**
+ * Which tab this panel is: "audio" scans URL / file / folder sources with
+ * recognition, "spotify" reads a Spotify link's own tracklist. Both then share
+ * the same tracklist tools (DJ Pool / YouTube probe, Get, Download All).
+ */
+export type TracklistVariant = "audio" | "spotify";
+
 export function TracklistPanel({
   settings,
   djPoolConfigured,
   acrConfigured,
+  variant = "audio",
 }: {
   settings: AppSettings;
   djPoolConfigured: boolean | null;
   acrConfigured: boolean | null;
+  variant?: TracklistVariant;
 }) {
-  const [mode, setMode] = useState<ScanMode>("url");
+  const spotify = variant === "spotify";
+  /** The link-based mode of this tab (Spotify tab has no file/folder modes). */
+  const urlMode: ScanMode = spotify ? "spotify" : "url";
+  const isLinkMode = (m: ScanMode | null | undefined) => m === "url" || m === "spotify";
+  const [mode, setMode] = useState<ScanMode>(urlMode);
   const [preset, setPreset] = useState<ScanPreset>("thorough");
   const [modeOpen, setModeOpen] = useState(false);
   const [url, setUrl] = useState("");
@@ -147,18 +175,14 @@ export function TracklistPanel({
   // Reconnect to a scan / Download All that kept running after this tab closed.
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/jobs/mine")
+    void fetch(`/api/jobs/mine?panel=${variant}`)
       .then((r) => (r.ok ? (r.json() as Promise<{ scan?: Job | null; djpool?: Job | null }>) : null))
       .then((data) => {
         if (cancelled || !data) return;
 
         if (data.scan) {
-          if (data.scan.scan?.sourceUrl) {
-            setMode("url");
-            setUrl(data.scan.scan.sourceUrl);
-          } else if (data.scan.scan?.mode) {
-            setMode(data.scan.scan.mode);
-          }
+          if (data.scan.scan?.mode) setMode(data.scan.scan.mode);
+          if (data.scan.scan?.sourceUrl) setUrl(data.scan.scan.sourceUrl);
           attach(data.scan.id);
         }
 
@@ -178,7 +202,7 @@ export function TracklistPanel({
             });
             setCleaned(true);
             if (snap.sourceUrl) {
-              setMode("url");
+              setMode(urlMode);
               setUrl(snap.sourceUrl);
             }
           }
@@ -227,7 +251,7 @@ export function TracklistPanel({
     return () => {
       cancelled = true;
     };
-  }, [attach, djAttach]);
+  }, [attach, djAttach, variant, urlMode]);
   const [djRows, setDjRows] = useState<Record<string, DjRowState>>({});
   const [picker, setPicker] = useState<{
     trackId: string | null;
@@ -236,12 +260,15 @@ export function TracklistPanel({
     /** Whether the pool candidates are a verified same-song match. */
     matched: boolean;
     error?: string;
+    /** "Show more" state: the picker starts with the first page of pool hits. */
+    more: { available: boolean; loading: boolean };
     youtube: { loading: boolean; results: YoutubeVersion[]; error?: string };
   }>({
     trackId: null,
     loading: false,
     candidates: [],
     matched: false,
+    more: { available: false, loading: false },
     youtube: { loading: false, results: [] },
   });
 
@@ -253,6 +280,15 @@ export function TracklistPanel({
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   // Candidates discovered during the availability probe, reused by Get/picker/play.
   const [djCandidates, setDjCandidates] = useState<Record<string, DjPoolCandidate[]>>({});
+  // The exact text sent to the pool per track, shown in the picker so a miss is explainable.
+  const [djQueries, setDjQueries] = useState<Record<string, string>>({});
+  const rememberQuery = useCallback((ids: string[], query: string) => {
+    setDjQueries((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = query;
+      return next;
+    });
+  }, []);
   // Tracks unchecked by the user — excluded from Download All (absent = included).
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   // Specific versions pinned from the picker, used by Get and Download All.
@@ -433,6 +469,7 @@ export function TracklistPanel({
         loading: false,
         candidates: [],
         matched: false,
+        more: { available: false, loading: false },
         youtube: { loading: false, results: [] },
       }),
     [],
@@ -544,6 +581,29 @@ export function TracklistPanel({
     [settings.djpool, djCandidates, trackNumPrefix, pins, downloadYoutube],
   );
 
+  /** One pool search for the picker; remembers the query text for the "Searched:" line. */
+  const searchPool = useCallback(
+    async (track: TrackEntry, limit = PICKER_PAGE) => {
+      const res = await fetch("/api/djpool/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: track.title, artist: track.artist, limit, preferences: settings.djpool }),
+      });
+      const data = (await res.json()) as {
+        query?: string;
+        candidates?: DjPoolCandidate[];
+        matched?: boolean;
+        total?: number;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Search failed.");
+      if (data.query) rememberQuery([track.id], data.query);
+      const candidates = data.candidates ?? [];
+      return { candidates, matched: data.matched === true, total: data.total ?? candidates.length };
+    },
+    [settings.djpool, rememberQuery],
+  );
+
   const openPicker = useCallback(
     async (track: TrackEntry) => {
       const poolEnabled = sourcePrefs.djpool && djPoolConfigured !== false;
@@ -558,25 +618,23 @@ export function TracklistPanel({
         // Cached candidates come from the availability probe, which only
         // stores verified same-song matches.
         matched: (cached?.length ?? 0) > 0,
+        // A full first page from the probe may hide more hits behind it.
+        more: { available: poolEnabled && (cached?.length ?? 0) >= PICKER_PAGE, loading: false },
         youtube: { loading: ytEnabled, results: [] },
       });
 
       if (needPoolFetch) {
         try {
-          const res = await fetch("/api/djpool/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: track.title, artist: track.artist, preferences: settings.djpool }),
-          });
-          const data = (await res.json()) as {
-            candidates?: DjPoolCandidate[];
-            matched?: boolean;
-            error?: string;
-          };
-          if (!res.ok) throw new Error(data.error ?? "Search failed.");
+          const data = await searchPool(track);
           setPicker((p) =>
             p.trackId === track.id
-              ? { ...p, loading: false, candidates: data.candidates ?? [], matched: data.matched === true }
+              ? {
+                  ...p,
+                  loading: false,
+                  candidates: data.candidates,
+                  matched: data.matched,
+                  more: { available: data.total > data.candidates.length, loading: false },
+                }
               : p,
           );
         } catch (err) {
@@ -609,7 +667,34 @@ export function TracklistPanel({
         }
       }
     },
-    [settings.djpool, djCandidates, sourcePrefs, djPoolConfigured],
+    [djCandidates, sourcePrefs, djPoolConfigured, searchPool],
+  );
+
+  /** "Show more" in the picker: one extra request for the larger page. */
+  const showMoreVersions = useCallback(
+    async (track: TrackEntry) => {
+      setPicker((p) => (p.trackId === track.id ? { ...p, more: { available: true, loading: true } } : p));
+      try {
+        const data = await searchPool(track, PICKER_PAGE_MAX);
+        setPicker((p) =>
+          p.trackId === track.id
+            ? {
+                ...p,
+                candidates: data.candidates,
+                matched: data.matched,
+                more: { available: false, loading: false },
+              }
+            : p,
+        );
+      } catch (err) {
+        setPicker((p) =>
+          p.trackId === track.id
+            ? { ...p, error: (err as Error).message, more: { available: false, loading: false } }
+            : p,
+        );
+      }
+    },
+    [searchPool],
   );
 
   const pickVersion = useCallback(
@@ -815,8 +900,9 @@ export function TracklistPanel({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ title: group.title, artist: group.artist, preferences: settings.djpool }),
           });
-          const data = (await res.json()) as { candidates?: DjPoolCandidate[]; matched?: boolean };
+          const data = (await res.json()) as { query?: string; candidates?: DjPoolCandidate[]; matched?: boolean };
           if (cancelled) return;
+          if (data.query) rememberQuery(group.ids, data.query);
           // Only a strong match (same song, not just a title collision) counts
           // as available; loose candidates stay reachable via the picker.
           const candidates = res.ok && data.matched ? data.candidates ?? [] : [];
@@ -855,6 +941,7 @@ export function TracklistPanel({
     sourcePrefs.djpool,
     sourcePrefs.youtube,
     sourcePrefs.priority,
+    rememberQuery,
   ]);
 
   /** Confirm handler for the source chooser dialog. */
@@ -884,6 +971,26 @@ export function TracklistPanel({
     }
   };
 
+  /**
+   * Switch how DJ Pool hits are ordered. Persisted with the other DJ Pool
+   * preferences, then the probe re-runs so Get / match badges reflect the
+   * new order (Saved / downloading rows are left alone).
+   */
+  const setRankingMode = (rankingMode: DjPoolRankingMode) => {
+    if (rankingMode === settings.djpool.rankingMode) return;
+    saveSettings({ ...settings, djpool: { ...settings.djpool, rankingMode } });
+    closePicker();
+    setDjCandidates({});
+    setDjRows((prev) => {
+      const next: typeof prev = {};
+      for (const [id, row] of Object.entries(prev)) {
+        next[id] = row.status === "done" || row.status === "downloading" ? row : { status: "idle" };
+      }
+      return next;
+    });
+    probedJobId.current = null;
+  };
+
   const djColumn: DjPoolColumn = {
     configured: djPoolConfigured,
     sources: sourcePrefs,
@@ -900,10 +1007,12 @@ export function TracklistPanel({
         return next;
       }),
     picker,
+    queries: djQueries,
     onDownload: downloadBest,
     onYoutubeGet: (track) => void downloadYoutube(track),
     onOpenPicker: openPicker,
     onClosePicker: closePicker,
+    onShowMore: (track) => void showMoreVersions(track),
     onPick: pickVersion,
     onPickYoutube: (track, video) => void downloadYoutube(track, video),
     canPlay,
@@ -973,7 +1082,7 @@ export function TracklistPanel({
     if (snap.sourceUrl?.startsWith("file:")) {
       setUrl("");
     } else if (snap.sourceUrl) {
-      setMode("url");
+      setMode(urlMode);
       setUrl(snap.sourceUrl);
     }
   };
@@ -1038,7 +1147,7 @@ export function TracklistPanel({
       return;
     }
     resetAll();
-    setMode("url");
+    setMode(urlMode);
     setUrl(item.url);
     if (item.tracks && item.tracks.length > 0) {
       setRestored({ url: item.url, title: item.title, tracks: item.tracks });
@@ -1067,7 +1176,7 @@ export function TracklistPanel({
   // Save nice titles to Recent once the scan reports them.
   const scanTitle = scan?.info?.title;
   useEffect(() => {
-    if (scanTitle && mode === "url" && url) addRecent(url, scanTitle);
+    if (scanTitle && isLinkMode(mode) && url) addRecent(url, scanTitle, undefined, mode as "url" | "spotify");
   }, [scanTitle, mode, url]);
 
   // Once a scan ends, save its tracklist so Recent can restore it later.
@@ -1081,8 +1190,8 @@ export function TracklistPanel({
     if (!done || !job || !scan || sourceTracks.length === 0) return;
     if (savedRecentJobId.current === job.id) return;
     savedRecentJobId.current = job.id;
-    if (scan.mode === "url") {
-      if (url) addRecent(url, scan.info?.title, sourceTracks);
+    if (scan.mode === "url" || scan.mode === "spotify") {
+      if (url) addRecent(url, scan.info?.title, sourceTracks, scan.mode);
     } else {
       const first = files[0]?.name;
       if (!first) return;
@@ -1103,7 +1212,7 @@ export function TracklistPanel({
       const form = new FormData();
       form.set("mode", scanMode);
       form.set("settings", JSON.stringify(effectiveScanSettings()));
-      if (scanMode === "url") {
+      if (isLinkMode(scanMode)) {
         form.set("url", scanUrl);
       } else {
         for (const file of files) form.append("files", file, file.name);
@@ -1113,7 +1222,7 @@ export function TracklistPanel({
   };
 
   const pendingScanSource =
-    mode === "url"
+    isLinkMode(mode)
       ? canonicalMediaUrl(url)
       : files[0]
         ? `file:${files.length > 1 ? `${files[0].name} +${files.length - 1} more` : files[0].name}`
@@ -1134,13 +1243,13 @@ export function TracklistPanel({
     // A different source: don't scan and download at the same time.
     if (djRunning) void djJob.pause();
     clearResults();
-    if (mode === "url") {
+    if (mode === "url" || mode === "spotify") {
       // One key per video: share links differ by a tracking param (?si=…)
       // each time they're copied, which would create a new Recent entry
       // for the same mix. Normalize before it is stored or sent anywhere.
       const canonical = canonicalMediaUrl(url);
       setUrl(canonical);
-      addRecent(canonical);
+      addRecent(canonical, undefined, undefined, mode);
       startScanJob(mode, canonical);
       return;
     }
@@ -1153,9 +1262,12 @@ export function TracklistPanel({
     : restored
       ? restored.url.startsWith("file:")
         ? "file"
-        : "url"
+        : isSpotifyUrl(restored.url)
+          ? "spotify"
+          : "url"
       : null;
-  // Rescan needs the original source to still be around (URL text / picked files).
+  // Rescan needs the original source to still be around (URL text / picked
+  // files). A Spotify list is read whole in one go — nothing to merge.
   const canRescan =
     resultMode === "url"
       ? url.trim().length > 0
@@ -1177,7 +1289,7 @@ export function TracklistPanel({
     startScanJob(resultMode);
   };
 
-  const canStart = mode === "url" ? url.trim().length > 0 : files.length > 0;
+  const canStart = isLinkMode(mode) ? url.trim().length > 0 : files.length > 0;
 
   // Local audio preview for single-file scans.
   const fileUrl = useMemo(() => (files[0] ? URL.createObjectURL(files[0]) : null), [files]);
@@ -1188,6 +1300,7 @@ export function TracklistPanel({
   }, [fileUrl]);
 
   const embedUrl = job && scan?.mode === "url" ? youtubeEmbed(url) : null;
+  const spotifyEmbed = job && scan?.mode === "spotify" ? spotifyEmbedUrl(url) : null;
 
   return (
     <div className={`space-y-8 ${nowPlaying ? "pb-24" : ""}`}>
@@ -1195,6 +1308,19 @@ export function TracklistPanel({
       <section className="mx-auto max-w-3xl rounded-2xl border border-border bg-surface/50 p-5 lg:p-7">
         {!job ? (
           <div className="space-y-6">
+            {spotify ? (
+              <div className="flex items-start gap-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200">
+                <AudioLines size={16} className="mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-semibold">Scan for Spotify (URL)</div>
+                  <div className="mt-0.5 text-xs leading-relaxed text-emerald-200/80">
+                    Paste a playlist, album or track link. The song list comes straight from Spotify — no audio
+                    recognition needed — and then works exactly like a scanned tracklist (DJ Pool / YouTube search,
+                    Get, Download All).
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div>
               {/* <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
                 What do you want to scan?
@@ -1221,12 +1347,13 @@ export function TracklistPanel({
                 ))}
               </div>
             </div>
+            )}
 
             {/* URL form */}
-            {mode === "url" && (
+            {isLinkMode(mode) && (
               <div>
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  URL
+                  {spotify ? "Spotify URL" : "URL"}
                 </label>
                 <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-1 focus-within:border-accent">
                   <Link2 size={16} className="shrink-0 text-muted" />
@@ -1234,7 +1361,7 @@ export function TracklistPanel({
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && canStart && beginScan()}
-                    placeholder="Paste YouTube URL"
+                    placeholder={spotify ? "Paste Spotify playlist / album / track link" : "Paste YouTube URL"}
                     className="w-full bg-transparent py-2.5 text-sm text-text outline-none placeholder:text-muted/60"
                   />
                 </div>
@@ -1309,8 +1436,11 @@ export function TracklistPanel({
                 )}
               </div>
             )}
-<hr className="h-px border-0 bg-white/20" />
-            {/* Scan preset — collapsed by default; people rarely change it. */}
+            {/* Scan preset — collapsed by default; people rarely change it.
+                Spotify lists are read as-is, so there is nothing to sample. */}
+            {!spotify && (
+            <>
+            <hr className="h-px border-0 bg-white/20" />
             <div>
               <button
                 type="button"
@@ -1349,6 +1479,8 @@ export function TracklistPanel({
                 </div>
               )}
             </div>
+            </>
+            )}
 
             <div className="space-y-2">
               <button
@@ -1358,7 +1490,13 @@ export function TracklistPanel({
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent-gradient px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {sameAsRunningBundle ? <DownloadCloud size={16} /> : <ScanLine size={16} />}
-                {starting ? "Starting…" : sameAsRunningBundle ? "Back to download" : "Start Scan"}
+                {starting
+                  ? "Starting…"
+                  : sameAsRunningBundle
+                    ? "Back to download"
+                    : spotify
+                      ? "Read Tracklist"
+                      : "Start Scan"}
               </button>
               {sameAsRunningBundle && (
                 <p className="text-center text-xs text-muted">
@@ -1426,6 +1564,16 @@ export function TracklistPanel({
               {!embedUrl && scan.mode === "file" && fileUrl && (
                 <audio controls src={fileUrl} className="h-9 w-full sm:max-w-sm" preload="metadata" />
               )}
+              {/* Spotify player for the list being read */}
+              {spotifyEmbed && (
+                <iframe
+                  src={spotifyEmbed}
+                  title="Spotify preview"
+                  className="h-[352px] w-full rounded-xl sm:max-w-md"
+                  allow="encrypted-media; clipboard-write"
+                  loading="lazy"
+                />
+              )}
 
               {job.error && (
                 <div className="rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
@@ -1474,7 +1622,13 @@ export function TracklistPanel({
                 </div>
               </div>
 
-              {/* Stats */}
+              {/* Stats — a Spotify list has no sampling to report on. */}
+              {scan.mode === "spotify" ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <Stat label="Tracks" value={String(scan.songsFound)} />
+                  <Stat label="Total Length" value={scan.totalDuration > 0 ? formatTimestamp(scan.totalDuration) : "—"} />
+                </div>
+              ) : (
               <div className={`grid grid-cols-2 gap-3 ${scan.totalFiles > 1 ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
                 {scan.totalFiles > 1 && (
                   <Stat label="Files" value={`${Math.min(scan.fileIndex + 1, scan.totalFiles)} / ${scan.totalFiles}`} />
@@ -1494,6 +1648,7 @@ export function TracklistPanel({
                 <Stat label="File Progress" value={`${scan.fileProgress.toFixed(0)}%`} />
                 <Stat label="Songs Found" value={String(scan.songsFound)} />
               </div>
+              )}
 
               {scan.totalFiles > 1 && scan.currentFile && (
                 <div className="truncate rounded-xl border border-border bg-surface px-4 py-2.5 text-xs text-muted">
@@ -1512,6 +1667,8 @@ export function TracklistPanel({
         // The scan on screen (live or restored) is the current session, not
         // history — Clear must leave it, or it "comes back" when the scan saves.
         activeUrl={restored?.url || (job ? pendingScanSource || undefined : undefined)}
+        // Each tab keeps its own history: Spotify links here, everything else on the audio tab.
+        filter={(item) => (item.kind === "spotify") === spotify}
       />
 
       {/* ---------- Tracklist ---------- */}
@@ -1553,6 +1710,28 @@ export function TracklistPanel({
                 >
                   <Settings2 size={13} /> {sourcesLabel}
                 </button>
+                {/* DJ Pool ranking chip — lives next to Sources because it only
+                    affects how this list's pool results are ordered. */}
+                {sourcePrefs.djpool && djPoolConfigured !== false && (
+                  <label
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-text"
+                    title={RANKING_MODES.find((m) => m.id === settings.djpool.rankingMode)?.hint}
+                  >
+                    <ArrowDownWideNarrow size={13} />
+                    <span className="hidden sm:inline">Ranking:</span>
+                    <select
+                      value={settings.djpool.rankingMode}
+                      onChange={(e) => setRankingMode(e.target.value as DjPoolRankingMode)}
+                      className="cursor-pointer bg-transparent text-xs font-medium text-text outline-none"
+                    >
+                      {RANKING_MODES.map((m) => (
+                        <option key={m.id} value={m.id} className="bg-surface text-text">
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
 
                 {/* Bundle controls. Buttons here act on THIS list only; a
                     bundle running on another list is surfaced by the floating
@@ -1704,7 +1883,7 @@ export function TracklistPanel({
           </div>
           {done && !hasTracks && (
             <p className="mt-3 text-center text-sm text-muted">
-              No songs were detected in this audio.
+              {spotify ? "No tracks were found in this Spotify link." : "No songs were detected in this audio."}
             </p>
           )}
         </section>

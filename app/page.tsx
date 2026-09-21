@@ -22,10 +22,11 @@ interface Me {
   picture?: string;
 }
 
-type Tab = "tracklist" | "djdl";
+type Tab = "tracklist" | "spotify" | "djdl";
 
 const TABS: { id: Tab; label: string; icon: typeof ListMusic }[] = [
-  { id: "tracklist", label: "Tracklist", icon: ListMusic },
+  { id: "tracklist", label: "Scan", icon: ListMusic },
+  { id: "spotify", label: "Scan for Spotify (URL)", icon: AudioLines },
   { id: "djdl", label: "Download for DJ", icon: Disc3 },
 ];
 
@@ -193,8 +194,17 @@ export default function Home() {
       )}
 
       <main>
+        {/* Both scan panels stay mounted so a running scan / Download All keeps streaming while hidden. */}
         <div className={tab === "tracklist" ? "" : "hidden"}>
           <TracklistPanel
+            settings={settings}
+            djPoolConfigured={health?.djPool ?? null}
+            acrConfigured={health?.acrCloud ?? null}
+          />
+        </div>
+        <div className={tab === "spotify" ? "" : "hidden"}>
+          <TracklistPanel
+            variant="spotify"
             settings={settings}
             djPoolConfigured={health?.djPool ?? null}
             acrConfigured={health?.acrCloud ?? null}

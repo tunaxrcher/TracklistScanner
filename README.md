@@ -1,6 +1,12 @@
 # Tracklist Scanner
 
-Find out **which songs are inside** a URL, a local audio file, or a whole folder — *without* downloading an MP3 first. Recognition uses **Shazam (primary)** with **ACRCloud (fallback)**. Once a tracklist is found, each song can be pulled straight from **DJ Pool Records** or **YouTube** (converted to MP3 320). A second tab, **Download for DJ**, turns any YouTube URL into a DJ-ready WAV or MP3 320 file.
+Find out **which songs are inside** a URL, a local audio/video file (MP3, WAV, FLAC, M4A, MP4, …), or a whole folder — *without* downloading an MP3 first. Recognition uses **Shazam (primary)** with **ACRCloud (fallback)**. Once a tracklist is found, each song can be pulled straight from **DJ Pool Records** or **YouTube** (converted to MP3 320).
+
+Three tabs:
+
+- **Scan** — URL / Audio File / Folder, recognized by sampling the audio.
+- **Scan for Spotify (URL)** — paste a Spotify playlist, album or track link; the tracklist is read straight from Spotify (no recognition) and then gets the same DJ Pool / YouTube tools. Without `SPOTIFY_CLIENT_ID`/`SECRET` the public embed page is used, which exposes the first 100 tracks of a playlist.
+- **Download for DJ** — turns any YouTube URL into a DJ-ready WAV or MP3 320 file.
 
 ## Requirements
 
@@ -121,7 +127,14 @@ Tracklist ─► login (cached session + WP nonce) ─► search files index ─
 ```
 
 - One authenticated session is reused across the whole job (and refreshed automatically if the nonce/cookies expire).
-- For each track the members-only file index is searched, then candidates are scored: relevance (right song) dominates, and version tags fine-tune which variant to grab. Preferences let you pick Clean/Dirty and avoid acapella, instrumental, intro/outro, and remix variants (abbreviations like `Acap` / `Inst` are recognized).
+- For each track the members-only file index is searched with `<first artist> <title without (…) tags>`; if that finds nothing usable, a title-only search follows. Every query is logged on the server as `[djpool search] … q="…"` and shown in the version picker ("Searched: …").
+- Candidates are then ranked. The **Ranking** chip in the tracklist toolbar (next to Sources) picks the rule; changing it re-probes the list:
+  - **Default** — same-song matches first (full title + ≥ half the artist tokens), then version tags decide (Clean/Dirty preference, avoid acapella / instrumental / intro-outro / remix; `Acap` / `Inst` abbreviations are recognized).
+  - **DJ Pool sort** — exactly the order the pool's own search returns, nothing filtered. Get / Download All only auto-pick when the first hit is the same song.
+  - **Intro Dirty first** — `(Intro Dirty)` edits first, then Dirty, then Intro (intro edits are not penalized).
+  - **Clean first** — clean versions first.
+- Only a verified same-song match is auto-downloaded; loose title collisions stay in the picker for manual choice.
+- The version picker shows the first 12 usable hits (from 40 pool results); **Show more versions** makes one extra request for up to 60 (from 100 pool results).
 - Tracks with no confident match are reported as **Not found** instead of grabbing the wrong file.
 - Requests are paced sequentially to stay polite to the site.
 
@@ -137,7 +150,8 @@ Temp files live in `temp/jobs/{jobId}/` and are removed automatically when a job
 ## Security notes
 
 - ACRCloud and DJ Pool secrets are read server-side from `.env.local` only.
-- URLs are validated (http/https, public host) before reaching yt-dlp.
+- URLs are validated (http/https, public host) before reaching yt-dlp; Spotify links are parsed to `{type, id}` and only `open.spotify.com` / `api.spotify.com` are ever contacted.
+- `/api/jobs/scan` is excluded from the auth proxy matcher because the proxy buffers request bodies in memory and truncates them at 10 MB; the route verifies the session itself before touching the upload.
 - DJ Pool downloaded file names are sanitized before being written or zipped.
 - All child processes are spawned with argument arrays (`spawn`), never concatenated shell strings.
 - Uploaded file names are sanitized before touching the filesystem.

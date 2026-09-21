@@ -32,6 +32,8 @@ export type AppErrorCode =
   | "DJPOOL_NOT_CONFIGURED"
   | "DJPOOL_LOGIN_FAILED"
   | "DJPOOL_UNAVAILABLE"
+  | "SPOTIFY_INVALID_URL"
+  | "SPOTIFY_UNAVAILABLE"
   | "DISK_FULL"
   | "PERMISSION_DENIED"
   | "CANCELLED"
@@ -57,6 +59,8 @@ export const ERROR_MESSAGES: Record<AppErrorCode, string> = {
   DJPOOL_NOT_CONFIGURED: "DJ Pool account is not configured. Add DJPOOL_EMAIL and DJPOOL_PASSWORD to .env.local.",
   DJPOOL_LOGIN_FAILED: "Could not sign in to DJ Pool Records. Check the account email and password.",
   DJPOOL_UNAVAILABLE: "DJ Pool Records could not be reached. Try again later.",
+  SPOTIFY_INVALID_URL: "Paste a Spotify playlist, album or track link (open.spotify.com/…).",
+  SPOTIFY_UNAVAILABLE: "Could not read this Spotify link. It may be private, empty, or Spotify is unreachable.",
   DISK_FULL: "Not enough disk space to complete this job.",
   PERMISSION_DENIED: "Permission denied while accessing files.",
   CANCELLED: "The job was cancelled.",

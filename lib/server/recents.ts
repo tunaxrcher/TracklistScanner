@@ -9,11 +9,11 @@ export interface RecentRecord {
   title?: string;
   at: number;
   tracks?: TrackEntry[];
-  kind: "url" | "file" | "folder";
+  kind: "url" | "file" | "folder" | "spotify";
 }
 
 const MAX_ITEMS = 20;
-const KINDS = new Set(["url", "file", "folder"]);
+const KINDS = new Set(["url", "file", "folder", "spotify"]);
 
 export async function upsertUser(email: string, name?: string, picture?: string): Promise<void> {
   const db = getDb();
@@ -47,7 +47,7 @@ export async function saveRecent(
   const kind = KINDS.has(item.kind ?? "") ? item.kind! : "url";
   // Same normalization as the client, so a share link copied twice (different
   // ?si= each time) updates one row instead of creating a second one.
-  const url = (kind === "url" ? canonicalMediaUrl(item.url) : item.url.trim()).slice(0, 500);
+  const url = (kind === "url" || kind === "spotify" ? canonicalMediaUrl(item.url) : item.url.trim()).slice(0, 500);
   if (!url) return;
   const db = getDb();
   const title = item.title?.slice(0, 512);

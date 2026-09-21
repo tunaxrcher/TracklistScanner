@@ -15,9 +15,10 @@ export type JobStatus =
   | "cancelled"
   | "paused";
 
-export type ScanMode = "url" | "file" | "folder";
+export type ScanMode = "url" | "file" | "folder" | "spotify";
 
-export type RecognitionProvider = "shazam" | "acrcloud";
+/** Where a track entry came from: audio recognition, or a Spotify tracklist read as-is. */
+export type RecognitionProvider = "shazam" | "acrcloud" | "spotify";
 
 export interface TrackEntry {
   id: string;
@@ -99,7 +100,19 @@ export interface ScanState {
 /** Which explicit/clean variant to prefer when both exist. */
 export type VersionPreference = "clean" | "dirty" | "either";
 
+/**
+ * How DJ Pool search hits are ordered for a track.
+ *  - default:    relevance + version tags (the original scoring)
+ *  - pool:       exactly the order the pool's own search returns
+ *  - introDirty: "(Intro Dirty)" style edits first, then dirty, then intro
+ *  - clean:      clean versions first
+ */
+export type DjPoolRankingMode = "default" | "pool" | "introDirty" | "clean";
+
+export const DJPOOL_RANKING_MODES: DjPoolRankingMode[] = ["default", "pool", "introDirty", "clean"];
+
 export interface DjPoolPreferences {
+  rankingMode: DjPoolRankingMode;
   versionPreference: VersionPreference;
   /** Skip acapella-only files. */
   avoidAcapella: boolean;
@@ -112,6 +125,7 @@ export interface DjPoolPreferences {
 }
 
 export const DEFAULT_DJPOOL_PREFERENCES: DjPoolPreferences = {
+  rankingMode: "default",
   versionPreference: "either",
   avoidAcapella: true,
   avoidInstrumental: true,

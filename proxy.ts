@@ -34,6 +34,11 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next internals and static assets.
-  matcher: ["/((?!_next/|favicon\\.ico|.*\\.(?:png|jpg|jpeg|webp|svg|ico|mp3|woff2?)$).*)"],
+  // Everything except Next internals and static assets — and the scan upload.
+  // The proxy buffers request bodies in memory and silently truncates them at
+  // 10 MB (experimental.proxyClientMaxBodySize), which turned every real
+  // audio/MP4 upload into "Failed to parse body as FormData". That route
+  // streams files to disk and checks the session itself (sessionEmail → 401),
+  // so it is safe to leave it out here.
+  matcher: ["/((?!_next/|favicon\\.ico|api/jobs/scan$|.*\\.(?:png|jpg|jpeg|webp|svg|ico|mp3|woff2?)$).*)"],
 };

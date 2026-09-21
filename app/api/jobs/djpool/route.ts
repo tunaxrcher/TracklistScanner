@@ -7,7 +7,9 @@ import { AppError, toUserMessage } from "@/lib/errors";
 import {
   DEFAULT_DJPOOL_PREFERENCES,
   DEFAULT_SOURCE_PREFS,
+  DJPOOL_RANKING_MODES,
   type DjPoolPreferences,
+  type DjPoolRankingMode,
   type SourcePrefs,
   type TrackEntry,
   type TrackPin,
@@ -84,6 +86,9 @@ export async function POST(request: NextRequest) {
 
     const p = body.preferences ?? {};
     const preferences: DjPoolPreferences = {
+      rankingMode: DJPOOL_RANKING_MODES.includes(p.rankingMode as DjPoolRankingMode)
+        ? (p.rankingMode as DjPoolRankingMode)
+        : DEFAULT_DJPOOL_PREFERENCES.rankingMode,
       versionPreference: VERSIONS.includes(p.versionPreference as VersionPreference)
         ? (p.versionPreference as VersionPreference)
         : DEFAULT_DJPOOL_PREFERENCES.versionPreference,
@@ -112,7 +117,7 @@ export async function POST(request: NextRequest) {
       artist: String(t.artist ?? "").slice(0, 200),
       album: t.album,
       coverUrl: t.coverUrl,
-      provider: t.provider === "acrcloud" ? "acrcloud" : "shazam",
+      provider: t.provider === "acrcloud" || t.provider === "spotify" ? t.provider : "shazam",
       file: String(t.file ?? "Online Source").slice(0, 200),
       fileIndex: Number(t.fileIndex) || 0,
       lastSeen: Number(t.lastSeen) || 0,

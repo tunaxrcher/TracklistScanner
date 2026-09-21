@@ -2,15 +2,16 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import { FileAudio, FolderOpen, Globe, ListMusic, Trash2, X } from "lucide-react";
-import { clearRecent, removeRecent, useRecent, type RecentItem } from "@/lib/client/recent";
+import { AudioLines, FileAudio, FolderOpen, Globe, ListMusic, Trash2, X } from "lucide-react";
+import { clearRecent, removeRecent, useRecent, type RecentItem, type RecentKind } from "@/lib/client/recent";
 import { youtubeThumb } from "@/lib/client/youtube";
 
-const KIND_BADGE = {
+const KIND_BADGE: Record<RecentKind, { label: string; icon: React.ReactNode }> = {
   url: { label: "URL", icon: <Globe size={9} /> },
   file: { label: "Audio", icon: <FileAudio size={9} /> },
   folder: { label: "Folder", icon: <FolderOpen size={9} /> },
-} as const;
+  spotify: { label: "Spotify", icon: <AudioLines size={9} /> },
+};
 
 function relativeTime(at: number): string {
   const diff = Date.now() - at;
@@ -27,13 +28,17 @@ export function RecentRow({
   onSelect,
   disabled,
   activeUrl,
+  filter,
 }: {
   onSelect: (item: RecentItem) => void;
   disabled?: boolean;
   /** Source currently on screen / being scanned — Clear leaves it alone. */
   activeUrl?: string;
+  /** Show only history that belongs to this tab (Spotify vs. audio scans). */
+  filter?: (item: RecentItem) => boolean;
 }) {
-  const items = useRecent();
+  const all = useRecent();
+  const items = filter ? all.filter(filter) : all;
   const [confirming, setConfirming] = useState(false);
   console.warn(`[recent-debug] RecentRow render items=${items.length}`);
   if (items.length === 0) return null;
@@ -75,7 +80,9 @@ export function RecentRow({
                 <button
                   type="button"
                   onClick={() => {
-                    clearRecent(keep);
+                    // A filtered row only owns what it shows — leave the other tab's history alone.
+                    if (filter) for (const item of items) if (item.url !== keep) removeRecent(item.url);
+                    else clearRecent(keep);
                     setConfirming(false);
                   }}
                   className="rounded-lg bg-danger px-2.5 py-1 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"

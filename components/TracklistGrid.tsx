@@ -21,6 +21,12 @@ import { djPoolStreamSrc, versionKey, youtubeStreamSrc, type DjRowState } from "
 /** A pin plus the human label shown in tooltips. */
 export type PinnedVersion = TrackPin & { label: string };
 
+const PROVIDER_BADGE: Record<TrackEntry["provider"], { label: string; title: string; className: string }> = {
+  shazam: { label: "Shazam", title: "Recognized by Shazam", className: "bg-sky-400/10 text-sky-300" },
+  acrcloud: { label: "ACR", title: "Recognized by ACRCloud", className: "bg-amber-400/10 text-amber-300" },
+  spotify: { label: "Spotify", title: "Listed in the Spotify tracklist", className: "bg-emerald-400/10 text-emerald-300" },
+};
+
 export interface DjPoolColumn {
   configured: boolean | null;
   sources: SourcePrefs;
@@ -40,12 +46,17 @@ export interface DjPoolColumn {
     /** Whether the pool candidates are a verified same-song match. */
     matched: boolean;
     error?: string;
+    /** Whether a larger page of pool hits can be requested / is loading. */
+    more: { available: boolean; loading: boolean };
     youtube: { loading: boolean; results: YoutubeVersion[]; error?: string };
   };
+  /** Text actually sent to the DJ Pool search, keyed by TrackEntry.id. */
+  queries: Record<string, string>;
   onDownload: (track: TrackEntry) => void;
   onYoutubeGet: (track: TrackEntry) => void;
   onOpenPicker: (track: TrackEntry) => void;
   onClosePicker: () => void;
+  onShowMore: (track: TrackEntry) => void;
   onPick: (track: TrackEntry, candidate: DjPoolCandidate) => void;
   onPickYoutube: (track: TrackEntry, item: YoutubeVersion) => void;
   /** Whether a probe-matched candidate exists that can be previewed. */
@@ -208,21 +219,27 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
 
       {pickerOpen && <div className="fixed inset-0 z-10" onClick={dj.onClosePicker} />}
 
+      {/* Wide enough for a full pool file name ("Artist - Title (Intro Dirty) 128"). */}
       {pickerOpen && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-80 overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
+        <div className="absolute right-0 top-full z-20 mt-1 w-[30rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
           <div className="flex items-center justify-between border-b border-border bg-surface-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
             Choose a version
             <button type="button" onClick={dj.onClosePicker} aria-label="Close version picker" className="text-muted hover:text-text">
               ✕
             </button>
           </div>
-          <div className="max-h-80 overflow-y-auto">
+          <div className="max-h-96 overflow-y-auto">
             {/* DJ Pool section */}
             {poolEnabled && (
               <>
                 <div className="bg-surface-2/60 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
                   DJ Pool Records
                 </div>
+                {dj.queries[track.id] && (
+                  <div className="truncate px-3 pt-1.5 text-[11px] text-muted" title={dj.queries[track.id]}>
+                    Searched: <span className="font-mono text-text/80">{dj.queries[track.id]}</span>
+                  </div>
+                )}
                 {dj.picker.loading ? (
                   <div className="flex items-center justify-center gap-2 px-3 py-4 text-sm text-muted">
                     <Loader2 size={14} className="animate-spin" /> Searching…
@@ -266,7 +283,12 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                           title="Download this version now"
                         >
                           <span className="min-w-0 flex-1">
-                            <span className={`block truncate text-xs font-medium ${isPlaying ? "text-accent" : ""}`}>{c.name}</span>
+                            <span
+                              className={`line-clamp-2 break-words text-xs font-medium leading-snug ${isPlaying ? "text-accent" : ""}`}
+                              title={c.name}
+                            >
+                              {c.name}
+                            </span>
                             <span className="block truncate text-[11px] text-muted">
                               {c.size}
                               {c.reasons.length > 0 && ` · ${c.reasons.join(", ")}`}
@@ -302,6 +324,24 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                       </div>
                     );
                   })}
+                  {dj.picker.more.available && (
+                    <button
+                      type="button"
+                      disabled={dj.picker.more.loading}
+                      onClick={() => dj.onShowMore(track)}
+                      className="flex w-full items-center justify-center gap-2 py-2.5 text-xs font-medium text-accent transition-colors hover:bg-surface-2 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {dj.picker.more.loading ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin" /> Loading more…
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown size={13} /> Show more versions
+                        </>
+                      )}
+                    </button>
+                  )}
                   </>
                 )}
               </>
@@ -354,7 +394,12 @@ function DjPoolActions({ track, dj }: { track: TrackEntry; dj: DjPoolColumn }) {
                             )}
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className={`block truncate text-xs font-medium ${isPlaying ? "text-accent" : ""}`}>{v.title}</span>
+                            <span
+                              className={`line-clamp-2 break-words text-xs font-medium leading-snug ${isPlaying ? "text-accent" : ""}`}
+                              title={v.title}
+                            >
+                              {v.title}
+                            </span>
                             <span className="block truncate text-[11px] text-muted">
                               {v.channel}
                               {v.duration ? ` · ${formatTimestamp(v.duration)}` : ""}
@@ -484,14 +529,10 @@ export function TracklistGrid({
               <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted/80">
                 <span className="font-mono">{formatTimestamp(track.timestamp)}</span>
                 <span
-                  className={`rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide ${
-                    track.provider === "shazam"
-                      ? "bg-sky-400/10 text-sky-300"
-                      : "bg-amber-400/10 text-amber-300"
-                  }`}
-                  title={`Recognized by ${track.provider === "shazam" ? "Shazam" : "ACRCloud"}`}
+                  className={`rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide ${PROVIDER_BADGE[track.provider].className}`}
+                  title={PROVIDER_BADGE[track.provider].title}
                 >
-                  {track.provider === "shazam" ? "Shazam" : "ACR"}
+                  {PROVIDER_BADGE[track.provider].label}
                 </span>
               </div>
             </div>

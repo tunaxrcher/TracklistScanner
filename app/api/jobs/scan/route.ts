@@ -9,6 +9,7 @@ import { jobManager } from "@/lib/server/jobs";
 import { jobTempDir, sanitizeFileName } from "@/lib/server/paths";
 import { startScanJob, type ScanRequest } from "@/lib/server/scanner/runner";
 import { validateMediaUrl, isSupportedAudioFile } from "@/lib/server/validate";
+import { canonicalSpotifyUrl, parseSpotifyUrl } from "@/lib/spotify";
 import { AppError, toUserMessage } from "@/lib/errors";
 import { DEFAULT_SCAN_SETTINGS, type ScanMode, type ScanSettings } from "@/lib/types";
 
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
   try {
     const form = await request.formData();
     const mode = form.get("mode") as ScanMode;
-    if (mode !== "url" && mode !== "file" && mode !== "folder") {
+    if (mode !== "url" && mode !== "file" && mode !== "folder" && mode !== "spotify") {
       return NextResponse.json({ error: "Invalid scan mode." }, { status: 400 });
     }
     const settings = parseSettings(form.get("settings") as string | null);
@@ -56,7 +57,11 @@ export async function POST(request: NextRequest) {
     const active = jobManager.findActiveByOwner(owner, "scan");
     if (active) jobManager.cancel(active.job.id);
 
-    if (mode === "url") {
+    if (mode === "spotify") {
+      const ref = parseSpotifyUrl(String(form.get("url") ?? ""));
+      if (!ref) throw new AppError("SPOTIFY_INVALID_URL");
+      scanRequest.url = canonicalSpotifyUrl(ref);
+    } else if (mode === "url") {
       scanRequest.url = validateMediaUrl(String(form.get("url") ?? ""));
     } else {
       const files = form.getAll("files").filter((f): f is File => f instanceof File);
@@ -107,7 +112,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ jobId: record.job.id });
   } catch (err) {
     console.error("[POST /api/jobs/scan]", err);
-    const status = err instanceof AppError && err.code === "INVALID_URL" ? 400 : 500;
+    const status =
+      err instanceof AppError && (err.code === "INVALID_URL" || err.code === "SPOTIFY_INVALID_URL") ? 400 : 500;
     return NextResponse.json({ error: toUserMessage(err) }, { status });
   }
 }
